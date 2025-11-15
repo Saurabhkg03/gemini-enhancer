@@ -9,43 +9,16 @@ import {
     FastForward, Menu, CheckCheck, Code, List, Cog, Trash2, Plus, File,
     Moon, Sun
 } from 'lucide-react';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { 
-    getFirestore, collection, addDoc, deleteDoc, updateDoc, getDocs, 
-    doc, getDoc, query, orderBy, serverTimestamp, limit 
-} from 'firebase/firestore';
+import { createClient } from '@supabase/supabase-js';
 
-// --- FIREBASE SETUP ---
-const getFirebaseConfig = () => {
-    if (typeof __firebase_config !== 'undefined') {
-        return JSON.parse(__firebase_config);
-    }
-    return {
-        apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-        authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-        storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-        messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-        appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
-    };
-};
+// --- SUPABASE SETUP ---
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabase = (supabaseUrl && supabaseAnonKey) 
+    ? createClient(supabaseUrl, supabaseAnonKey) 
+    : null;
 
-const firebaseConfig = getFirebaseConfig();
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'gemini-enhancer';
-
-let app, auth, db;
-if (firebaseConfig?.apiKey && typeof window !== 'undefined') {
-    try {
-        app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-        auth = getAuth(app);
-        db = getFirestore(app);
-    } catch (e) {
-        console.error("Firebase initialization failed:", e);
-    }
-}
-
-// --- PROMPTS ---
+// --- PROMPTS (Unchanged) ---
 const PROMPTS = {
     MULTIMODAL: `You are an expert revision tutor. Provide a CONCISE, clear explanation for the "QUESTION" based on provided images.
 
@@ -85,7 +58,7 @@ Output ONLY the revised HTML wrapped in <div class="mtq_explanation-text space-y
 
 Formatting Rules (STRICT):
 1. NO markdown blocks. Output raw HTML only.
-2. Use <h3> for headers, <ul>/<ol> for steps, <p> for text.
+2. Use 3 for headers, <ul>/<ol> for steps, <p> for text.
 3. Use $$...$$ for block math, $...$ for inline math.
 4. Keep it short and direct. Focus on the mathematical steps.
 
@@ -442,7 +415,7 @@ const SettingsModal = ({ isOpen, onClose, files, onUpload, onDelete, onLoad, isU
                                                 <div className="overflow-hidden">
                                                     <p className={`text-sm font-medium truncate ${file.id === activeFileId ? 'text-indigo-900 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`} title={file.name}>{file.name}</p>
                                                     <p className={`text-xs ${file.id === activeFileId ? 'text-indigo-400 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500'}`}>
-                                                        {file.updatedAt?.seconds ? new Date(file.updatedAt.seconds * 1000).toLocaleDateString() : 'Just now'}
+                                                        {new Date(file.updated_at).toLocaleDateString()}
                                                         {file.id === activeFileId && <span className="ml-2 font-semibold text-indigo-600 dark:text-indigo-400">— Active</span>}
                                                     </p>
                                                 </div>
@@ -513,41 +486,48 @@ export default function Home() {
         const storedKey = localStorage.getItem("gemini_api_key");
         if (storedKey) setApiKey(storedKey);
 
-        if (!auth) {
+        if (!supabase) {
              setUi(prev => ({ ...prev, isCheckingFiles: false }));
              return;
         }
 
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                setUserId(user.uid);
-                 // Fetch files and then try to auto-load the most recent one
-                await fetchAndAutoLoad(user.uid);
-            } else {
-                try {
-                    if (typeof __initial_auth_token !== 'undefined') {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                } catch (e) {
-                    console.error("Auth failed:", e);
-                    setUi(prev => ({ ...prev, isCheckingFiles: false }));
-                }
+        const initSession = async () => {
+            let { data: { session } } = await supabase.auth.getSession();
+            if (!session) {
+                const { data: anonData, error } = await supabase.auth.signInAnonymously();
+                if (error) console.error("Anon auth failed:", error);
+                session = anonData.session;
             }
+            if (session) {
+                setUserId(session.user.id);
+                await fetchAndAutoLoad(session.user.id);
+            } else {
+                 setUi(prev => ({ ...prev, isCheckingFiles: false }));
+            }
+        };
+        initSession();
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+             if (event === 'SIGNED_IN' && session) {
+                 setUserId(session.user.id);
+                 await fetchAndAutoLoad(session.user.id);
+             }
         });
-        return () => unsubscribe();
+        return () => subscription.unsubscribe();
     }, []);
 
     const fetchAndAutoLoad = async (uid) => {
-        if (!db || !uid) return;
+        if (!supabase || !uid) return;
         try {
-            const q = query(collection(db, `artifacts/${appId}/users/${uid}/files`), orderBy('updatedAt', 'desc'));
-            const snapshot = await getDocs(q);
-            const fileList = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            const { data: fileList, error } = await supabase
+                .from('question_banks')
+                .select('id, name, updated_at, original_data, enhanced_data, status')
+                .eq('user_id', uid)
+                .order('updated_at', { ascending: false });
+
+            if (error) throw error;
             setFiles(fileList);
 
-            // Auto-load the most recent file if it exists
             if (fileList.length > 0) {
                 console.log("Auto-loading most recent file:", fileList[0].name);
                 loadFileData(fileList[0]);
@@ -560,24 +540,29 @@ export default function Home() {
     };
 
     const fetchFiles = async (uid) => {
-         if (!db || !uid) return;
+         if (!supabase || !uid) return;
         try {
-            const q = query(collection(db, `artifacts/${appId}/users/${uid}/files`), orderBy('updatedAt', 'desc'));
-            const snapshot = await getDocs(q);
-            setFiles(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+             const { data: fileList } = await supabase
+                .from('question_banks')
+                .select('id, name, updated_at') // Only fetch metadata for list
+                .eq('user_id', uid)
+                .order('updated_at', { ascending: false });
+            if (fileList) setFiles(prev => fileList.map(f => ({...prev.find(p => p.id === f.id), ...f})));
         } catch (e) { console.error("Error fetching files:", e); }
     };
 
-    // Save current progress to Firestore
+    // Save current progress to Supabase
     const saveProgress = useCallback(async (fileId, currentData, currentStatus) => {
-        if (!db || !userId || !fileId) return;
+        if (!supabase || !userId || !fileId) return;
         try {
-            const fileRef = doc(db, `artifacts/${appId}/users/${userId}/files`, fileId);
-            await updateDoc(fileRef, {
-                enhancedData: JSON.stringify(currentData.enhanced),
-                status: currentStatus,
-                updatedAt: serverTimestamp()
-            });
+             await supabase
+                .from('question_banks')
+                .update({
+                    enhanced_data: currentData.enhanced,
+                    status: currentStatus,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', fileId);
             // Silently update file list timestamp in background
             fetchFiles(userId); 
         } catch (e) {
@@ -595,7 +580,6 @@ export default function Home() {
         });
         setHistoryIndex(prev => prev + 1);
         
-        // Trigger auto-save if working on a saved file
         if (activeFileId) {
             saveProgress(activeFileId, newData, newStatus);
         }
@@ -607,7 +591,6 @@ export default function Home() {
             setHistoryIndex(newIndex);
             setData(history[newIndex].data);
             setStatus(history[newIndex].status);
-            // Optionally autosave on undo/redo too
              if (activeFileId) saveProgress(activeFileId, history[newIndex].data, history[newIndex].status);
         }
     }, [history, historyIndex, activeFileId, saveProgress]);
@@ -624,15 +607,15 @@ export default function Home() {
 
     const loadFileData = (fileDoc) => {
         try {
-            // Handle both new robust structure and old simple structure for backward compatibility
-            const original = typeof fileDoc.originalData === 'string' ? JSON.parse(fileDoc.originalData) : (fileDoc.data ? JSON.parse(fileDoc.data) : []);
-            const enhanced = typeof fileDoc.enhancedData === 'string' ? JSON.parse(fileDoc.enhancedData) : JSON.parse(JSON.stringify(original));
-            const loadedStatus = fileDoc.status || original.reduce((acc, _, i) => ({ ...acc, [i]: 'pending' }), {});
+            // Handle Supabase's automatic JSON parsing, no need for JSON.parse if it's already an object
+            const original = typeof fileDoc.original_data === 'string' ? JSON.parse(fileDoc.original_data) : fileDoc.original_data;
+            const enhanced = typeof fileDoc.enhanced_data === 'string' ? JSON.parse(fileDoc.enhanced_data) : fileDoc.enhanced_data;
+            const loadedStatus = typeof fileDoc.status === 'string' ? JSON.parse(fileDoc.status) : fileDoc.status;
 
             if (!Array.isArray(original) || original.length === 0) throw new Error("Invalid file data");
 
             setData({ original, enhanced });
-            setStatus(loadedStatus);
+            setStatus(loadedStatus || original.reduce((acc, _, i) => ({ ...acc, [i]: 'pending' }), {}));
             setHistory([{ data: { original, enhanced }, status: loadedStatus }]);
             setHistoryIndex(0);
             setActiveFileId(fileDoc.id);
@@ -643,44 +626,34 @@ export default function Home() {
         }
     };
 
-    // Helper for local file load (temporary, not saved to Firestore yet)
-    const loadLocalJson = (json) => {
-         if (!Array.isArray(json) || json.length === 0) throw new Error("Invalid JSON");
-         const initialData = { original: json, enhanced: JSON.parse(JSON.stringify(json)) };
-         const initialStatus = json.reduce((acc, _, i) => ({ ...acc, [i]: 'pending' }), {});
-         setData(initialData);
-         setStatus(initialStatus);
-         setHistory([{ data: initialData, status: initialStatus }]);
-         setHistoryIndex(0);
-         setActiveFileId(null); // Not saved yet
-         setUi(prev => ({ ...prev, idx: 0 }));
-    }
-
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
-        if (!file || !userId || !db) return;
+        if (!file || !userId || !supabase) return;
         setUi(prev => ({ ...prev, isUploading: true }));
         try {
             const text = await file.text();
             if (!text || text.trim().length === 0) throw new Error("File is empty");
-            const json = JSON.parse(text); // Validate JSON
+            const json = JSON.parse(text);
 
              if (!Array.isArray(json)) throw new Error("Root must be an array");
             
-            // Create robust document structure
-            const newDoc = {
+             const newDoc = {
+                user_id: userId,
                 name: file.name,
-                originalData: JSON.stringify(json),
-                enhancedData: JSON.stringify(json), // Initially same as original
-                status: json.reduce((acc, _, i) => ({ ...acc, [i]: 'pending' }), {}),
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp()
+                original_data: json,
+                enhanced_data: json,
+                status: json.reduce((acc, _, i) => ({ ...acc, [i]: 'pending' }), {})
             };
 
-            const docRef = await addDoc(collection(db, `artifacts/${appId}/users/${userId}/files`), newDoc);
-            
-            // Immediately load the new file
-            loadFileData({ id: docRef.id, ...newDoc });
+            const { data: insertedData, error } = await supabase
+                .from('question_banks')
+                .insert(newDoc)
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            loadFileData(insertedData);
             await fetchFiles(userId);
 
         } catch (err) { 
@@ -693,9 +666,9 @@ export default function Home() {
     };
 
     const handleFileDelete = async (fileId) => {
-        if (!userId || !db || !confirm("Are you sure you want to delete this file?")) return;
+        if (!userId || !supabase || !confirm("Are you sure you want to delete this file?")) return;
         try {
-            await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/files`, fileId));
+            await supabase.from('question_banks').delete().eq('id', fileId);
             setFiles(prev => prev.filter(f => f.id !== fileId));
             if (fileId === activeFileId) {
                 setData({ original: null, enhanced: null });
@@ -712,7 +685,16 @@ export default function Home() {
         setUi(prev => ({ ...prev, loading: true }));
         try {
             const text = await file.text();
-            loadLocalJson(JSON.parse(text));
+            const json = JSON.parse(text);
+             if (!Array.isArray(json) || json.length === 0) throw new Error("Invalid JSON");
+             const initialData = { original: json, enhanced: JSON.parse(JSON.stringify(json)) };
+             const initialStatus = json.reduce((acc, _, i) => ({ ...acc, [i]: 'pending' }), {});
+             setData(initialData);
+             setStatus(initialStatus);
+             setHistory([{ data: initialData, status: initialStatus }]);
+             setHistoryIndex(0);
+             setActiveFileId(null);
+             setUi(prev => ({ ...prev, idx: 0 }));
         } catch (err) { 
             alert("Failed to load local file: " + err.message); 
         } finally { 
@@ -883,9 +865,14 @@ export default function Home() {
             <>
                 <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-50 to-indigo-50/30 dark:from-slate-950 dark:to-indigo-950/30">
                     <div className="max-w-md w-full bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-800 text-center space-y-6 sm:space-y-8 relative">
-                         <button onClick={() => setUi(p => ({...p, showSettings: true}))} className="absolute top-4 right-4 p-2 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-full transition-colors" title="Manage Saved Files">
-                            <Cog className="w-5 h-5" />
-                        </button>
+                         <div className="absolute top-4 right-4 flex items-center gap-2">
+                             <button onClick={toggleDarkMode} className="p-2 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-full transition-colors" title="Toggle Theme">
+                                {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                            </button>
+                             <button onClick={() => setUi(p => ({...p, showSettings: true}))} className="p-2 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-full transition-colors" title="Manage Saved Files">
+                                <Cog className="w-5 h-5" />
+                            </button>
+                         </div>
                         <div className="inline-flex p-4 bg-indigo-50 dark:bg-indigo-900/30 rounded-2xl mb-2"><Sparkles className="w-12 h-12 text-indigo-600 dark:text-indigo-400" /></div>
                         <div>
                             <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white mb-3">Gemini Enhancer</h1>
@@ -922,7 +909,16 @@ export default function Home() {
                     files={files}
                     onUpload={handleFileUpload}
                     onDelete={handleFileDelete}
-                    onLoad={loadFileData}
+                    onLoad={(file) => {
+                        // Ensure we load the full data if it wasn't fetched in the list view
+                        if (!file.original_data) {
+                             supabase.from('question_banks').select('*').eq('id', file.id).single().then(({ data }) => {
+                                 if (data) loadFileData(data);
+                             });
+                        } else {
+                            loadFileData(file);
+                        }
+                    }}
                     isUploading={ui.isUploading}
                     userId={userId}
                     activeFileId={activeFileId}
@@ -1069,7 +1065,15 @@ export default function Home() {
                 files={files}
                 onUpload={handleFileUpload}
                 onDelete={handleFileDelete}
-                onLoad={loadFileData}
+                onLoad={(file) => {
+                    if (!file.original_data) {
+                         supabase.from('question_banks').select('*').eq('id', file.id).single().then(({ data }) => {
+                             if (data) loadFileData(data);
+                         });
+                    } else {
+                        loadFileData(file);
+                    }
+                }}
                 isUploading={ui.isUploading}
                 userId={userId}
                 activeFileId={activeFileId}
