@@ -68,37 +68,37 @@ export default function Home() {
 
     // Auth & Initial Load
     useEffect(() => {
-        console.log("Auth useEffect: Running."); // <-- ADDED
+        console.log("Auth useEffect: Running."); 
         setUi(prev => ({ ...prev, isClient: true }));
         const storedKey = localStorage.getItem("gemini_api_key");
         if (storedKey) setApiKey(storedKey);
 
         if (!supabase) {
-             console.warn("Auth useEffect: Supabase client not found."); // <-- ADDED
+             console.warn("Auth useEffect: Supabase client not found."); 
              setUi(prev => ({ ...prev, isCheckingFiles: false }));
              return;
         }
-        console.log("Auth useEffect: Supabase client found."); // <-- ADDED
+        console.log("Auth useEffect: Supabase client found."); 
 
         // Check for existing session on load
         const checkSession = async () => {
-            console.log("checkSession: Starting..."); // <-- ADDED
+            console.log("checkSession: Starting..."); 
             try {
                 const { data: { session }, error } = await supabase.auth.getSession();
-                console.log("checkSession: getSession result", { session, error }); // <-- ADDED
+                console.log("checkSession: getSession result", { session, error }); 
                 if (error) throw error;
                 if (session) {
-                    console.log("checkSession: Session found, user:", session.user.id); // <-- ADDED
+                    console.log("checkSession: Session found, user:", session.user.id); 
                     setUserId(session.user.id);
                     await fetchAndAutoLoad(session.user.id);
                 } else {
-                    console.log("checkSession: No session found."); // <-- ADDED
-                    console.log("Setting isCheckingFiles: false (no session)"); // <-- ADDED
+                    console.log("checkSession: No session found."); 
+                    console.log("Setting isCheckingFiles: false (no session)"); 
                     setUi(prev => ({ ...prev, isCheckingFiles: false }));
                 }
             } catch (error) {
                 console.error("Error checking session:", error);
-                console.log("Setting isCheckingFiles: false (session error)"); // <-- ADDED
+                console.log("Setting isCheckingFiles: false (session error)"); 
                 setUi(prev => ({ ...prev, isCheckingFiles: false }));
             }
         };
@@ -107,14 +107,14 @@ export default function Home() {
 
         // Listen for auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-             console.log("onAuthStateChange: Event triggered:", event); // <-- ADDED
+             console.log("onAuthStateChange: Event triggered:", event); 
              if (event === 'SIGNED_IN' && session) {
-                 console.log("onAuthStateChange: SIGNED_IN, fetching data."); // <-- ADDED
+                 console.log("onAuthStateChange: SIGNED_IN, fetching data."); 
                  setUserId(session.user.id);
                  await fetchAndAutoLoad(session.user.id);
              } else if (event === 'SIGNED_OUT') {
                  // Clear state if user signs out in another tab
-                 console.log("onAuthStateChange: SIGNED_OUT, clearing state."); // <-- ADDED
+                 console.log("onAuthStateChange: SIGNED_OUT, clearing state."); 
                  setData({ original: null, enhanced: null });
                  setStatus({});
                  setFiles([]);
@@ -128,10 +128,10 @@ export default function Home() {
     }, []);
 
     const fetchAndAutoLoad = async (uid) => {
-        console.log(`fetchAndAutoLoad: Starting for user ${uid}`); // <-- ADDED
+        console.log(`fetchAndAutoLoad: Starting for user ${uid}`); 
         if (!supabase || !uid) {
-             console.warn("fetchAndAutoLoad: Aborting, no supabase client or user ID."); // <-- ADDED
-             console.log("Setting isCheckingFiles: false (fetchAndAutoLoad abort)"); // <-- ADDED
+             console.warn("fetchAndAutoLoad: Aborting, no supabase client or user ID."); 
+             console.log("Setting isCheckingFiles: false (fetchAndAutoLoad abort)"); 
              setUi(prev => ({ ...prev, isCheckingFiles: false }));
              return;
         }
@@ -142,7 +142,7 @@ export default function Home() {
                 .eq('user_id', uid)
                 .order('updated_at', { ascending: false });
 
-            console.log("fetchAndAutoLoad: Query result", { fileList, error }); // <-- ADDED
+            console.log("fetchAndAutoLoad: Query result", { fileList, error }); 
             if (error) throw error;
             setFiles(fileList);
 
@@ -153,8 +153,8 @@ export default function Home() {
         } catch (e) {
             console.error("Error fetching files:", e);
         } finally {
-             console.log("fetchAndAutoLoad: Reached finally block."); // <-- ADDED
-             console.log("Setting isCheckingFiles: false (fetchAndAutoLoad finally)"); // <-- ADDED
+             console.log("fetchAndAutoLoad: Reached finally block."); 
+             console.log("Setting isCheckingFiles: false (fetchAndAutoLoad finally)"); 
              setUi(prev => ({ ...prev, isCheckingFiles: false }));
         }
     };
@@ -501,7 +501,6 @@ export default function Home() {
                 handleFileDelete={handleFileDelete}
                 loadFileData={loadFileData}
                 supabase={supabase}
-                userId={userId}
                 activeFileId={activeFileId}
             />
         );
