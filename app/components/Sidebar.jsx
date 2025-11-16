@@ -26,7 +26,13 @@ export const Sidebar = ({
                         const st = status[i];
                         const isActive = i === ui.idx;
                         return (
-                            <button key={i} onClick={() => setUi(p => ({ ...p, idx: i, isSidebarOpen: false }))} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 group ${isActive ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-900/50 shadow-sm' : 'bg-white dark:bg-slate-900 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800 hover:border-slate-200 dark:hover:border-slate-700'}`}>
+                            <button 
+                                key={i} 
+                                onClick={() => setUi(p => ({ ...p, idx: i, isSidebarOpen: false }))} 
+                                className={`w-full text-left p-3 rounded-xl border transition-all duration-200 group ${isActive ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-900/50 shadow-sm' : 'bg-white dark:bg-slate-900 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800 hover:border-slate-200 dark:hover:border-slate-700'}`}
+                                // Optimization: content-visibility skips rendering off-screen items
+                                style={{ contentVisibility: 'auto', containIntrinsicSize: '60px' }} 
+                            >
                                 <div className="flex justify-between items-center mb-1">
                                     <span className={`font-semibold text-sm ${isActive ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`}>Question {i + 1}</span>
                                     {st === 'approved' && <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />}

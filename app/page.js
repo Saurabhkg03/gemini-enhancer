@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Loader2 } from 'lucide-react';
 
@@ -14,267 +14,265 @@ import { useKatex } from './hooks/useKatex';
 import { useDarkMode } from './hooks/useDarkMode';
 import { JsonViewerModal } from './components/JsonViewerModal';
 import { SettingsModal } from './components/SettingsModal';
-import { UploadScreen } from './components/UploadScreen';
+import { LandingPage } from './components/LandingPage';
+import { Dashboard } from './components/Dashboard';
 import { AppHeader } from './components/AppHeader';
 import { Sidebar } from './components/Sidebar';
 import { EditorView } from './components/EditorView';
 
+// Helper for chunking large arrays
+const chunkArray = (array, size) => {
+    const chunked = [];
+    for (let i = 0; i < array.length; i += size) {
+        chunked.push(array.slice(i, i + size));
+    }
+    return chunked;
+};
+
 // --- MAIN APP ---
 export default function Home() {
     const [apiKey, setApiKey] = useState("");
-    const [data, setData] = useState({ original: null, enhanced: null });
+    
+    // Data State
+    const [data, setData] = useState({ original: null, enhanced: null }); 
+    const [questionIds, setQuestionIds] = useState([]); // Map index -> DB ID
+    
     const [ui, setUi] = useState({ 
         idx: 0, subject: null, loading: false, isClient: false, showJson: false, showSettings: false,
         batchSize: 5, isBatchRunning: false, batchProgress: { current: 0, total: 0 },
-        isSidebarOpen: false, isUploading: false, isCheckingFiles: true
+        isSidebarOpen: false, isUploading: false, isCheckingFiles: true,
+        isSaving: false 
     });
+    
     const [status, setStatus] = useState({});
-    const [history, setHistory] = useState([]);
+    
+    // Optimized History (Stores diffs only)
+    const [history, setHistory] = useState([]); 
     const [historyIndex, setHistoryIndex] = useState(-1);
+
     const [userId, setUserId] = useState(null);
     const [files, setFiles] = useState([]);
     const [activeFileId, setActiveFileId] = useState(null);
+    
+    // Refs for debouncing
+    const saveQueue = useRef(new Set()); // Track which indices need saving
+    const saveTimeoutRef = useRef(null);
+    
+    // Track auth initialization state to prevent duplicate work
+    const authInitialized = useRef(false);
+    const userIdRef = useRef(null); // Ref to track userId without triggering re-renders in callbacks
+
     const isKatexLoaded = useKatex();
     const { isDarkMode, toggleDarkMode } = useDarkMode();
 
-    // --- NEW AUTH FUNCTIONS ---
+    // Keep ref in sync with state
+    useEffect(() => {
+        userIdRef.current = userId;
+    }, [userId]);
+
+    // --- AUTH & SETUP ---
     const handleLogin = async () => {
         if (!supabase) return;
-        try {
-            await supabase.auth.signInWithOAuth({
-                provider: 'google',
-            });
-        } catch (error) {
-            console.error("Error during Google sign-in:", error);
-        }
+        await supabase.auth.signInWithOAuth({ provider: 'google' });
     };
 
     const handleLogout = async () => {
-        if (!supabase) return;
-        try {
-            await supabase.auth.signOut();
-            // Clear all local state on logout
-            setData({ original: null, enhanced: null });
-            setStatus({});
-            setFiles([]);
-            setHistory([]);
-            setHistoryIndex(-1);
-            setActiveFileId(null);
-            setUserId(null);
-        } catch (error) {
-            console.error("Error during sign-out:", error);
+        if (ui.isSaving || saveQueue.current.size > 0) {
+             await processSaveQueue(); // Flush pending saves
         }
+        if (!supabase) return;
+        await supabase.auth.signOut();
+        resetState();
     };
 
-    // Auth & Initial Load
+    const resetState = () => {
+        setData({ original: null, enhanced: null });
+        setStatus({});
+        setQuestionIds([]);
+        setFiles([]);
+        setHistory([]);
+        setHistoryIndex(-1);
+        setActiveFileId(null);
+        setUserId(null);
+        setUi(p => ({ ...p, idx: 0 }));
+    };
+
+    const handleBackToDashboard = async () => {
+        if (saveQueue.current.size > 0) await processSaveQueue();
+        setData({ original: null, enhanced: null });
+        setStatus({});
+        setQuestionIds([]);
+        setHistory([]);
+        setHistoryIndex(-1);
+        setActiveFileId(null);
+        setUi(p => ({ ...p, idx: 0 }));
+        if (userId) fetchFiles(userId);
+    };
+
     useEffect(() => {
-        console.log("Auth useEffect: Running."); 
         setUi(prev => ({ ...prev, isClient: true }));
         const storedKey = localStorage.getItem("gemini_api_key");
         if (storedKey) setApiKey(storedKey);
 
         if (!supabase) {
-             console.warn("Auth useEffect: Supabase client not found."); 
              setUi(prev => ({ ...prev, isCheckingFiles: false }));
              return;
         }
-        console.log("Auth useEffect: Supabase client found."); 
 
-        // Check for existing session on load
-        const checkSession = async () => {
-            console.log("checkSession: Starting..."); 
+        // Safety timeout: If auth hangs for 4s, stop loading anyway to show Landing/Login
+        const safetyTimeout = setTimeout(() => {
+            if (!authInitialized.current) {
+                console.warn("Auth check timed out, forcing UI load");
+                setUi(prev => ({ ...prev, isCheckingFiles: false }));
+            }
+        }, 4000);
+
+        const initAuth = async () => {
             try {
-                const { data: { session }, error } = await supabase.auth.getSession();
-                console.log("checkSession: getSession result", { session, error }); 
-                if (error) throw error;
+                const { data: { session } } = await supabase.auth.getSession();
                 if (session) {
-                    console.log("checkSession: Session found, user:", session.user.id); 
                     setUserId(session.user.id);
-                    await fetchAndAutoLoad(session.user.id);
-                } else {
-                    console.log("checkSession: No session found."); 
-                    console.log("Setting isCheckingFiles: false (no session)"); 
-                    setUi(prev => ({ ...prev, isCheckingFiles: false }));
+                    // Fetch files but don't block completely if it takes too long? 
+                    // Actually better to wait for files so dashboard isn't empty.
+                    await fetchFiles(session.user.id);
                 }
             } catch (error) {
                 console.error("Error checking session:", error);
-                console.log("Setting isCheckingFiles: false (session error)"); 
+            } finally {
+                authInitialized.current = true;
                 setUi(prev => ({ ...prev, isCheckingFiles: false }));
+                clearTimeout(safetyTimeout);
             }
         };
 
-        checkSession();
+        initAuth();
 
-        // Listen for auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-             console.log("onAuthStateChange: Event triggered:", event); 
              if (event === 'SIGNED_IN' && session) {
-                 console.log("onAuthStateChange: SIGNED_IN, fetching data."); 
-                 setUserId(session.user.id);
-                 await fetchAndAutoLoad(session.user.id);
+                 // Only act if we detected a USER CHANGE or if it's a fresh sign-in event
+                 // that wasn't handled by initAuth
+                 setUserId(prevId => {
+                    if (prevId !== session.user.id) {
+                        // New user or login event: Fetch files in background
+                        fetchFiles(session.user.id);
+                        return session.user.id;
+                    }
+                    return prevId;
+                 });
+                 
+                 // Ensure loading is off (in case onAuthStateChange fires before initAuth finishes)
+                 if (authInitialized.current) {
+                    setUi(prev => ({ ...prev, isCheckingFiles: false }));
+                 }
+
              } else if (event === 'SIGNED_OUT') {
-                 // Clear state if user signs out in another tab
-                 console.log("onAuthStateChange: SIGNED_OUT, clearing state."); 
-                 setData({ original: null, enhanced: null });
-                 setStatus({});
-                 setFiles([]);
-                 setHistory([]);
-                 setHistoryIndex(-1);
-                 setActiveFileId(null);
-                 setUserId(null);
+                 resetState();
+                 setUi(prev => ({ ...prev, isCheckingFiles: false }));
              }
         });
-        return () => subscription.unsubscribe();
+        return () => {
+            subscription.unsubscribe();
+            clearTimeout(safetyTimeout);
+        };
     }, []);
 
-    const fetchAndAutoLoad = async (uid) => {
-        console.log(`fetchAndAutoLoad: Starting for user ${uid}`); 
-        if (!supabase || !uid) {
-             console.warn("fetchAndAutoLoad: Aborting, no supabase client or user ID."); 
-             console.log("Setting isCheckingFiles: false (fetchAndAutoLoad abort)"); 
-             setUi(prev => ({ ...prev, isCheckingFiles: false }));
-             return;
-        }
-        try {
-            const { data: fileList, error } = await supabase
-                .from('question_banks')
-                .select('id, name, updated_at, original_data, enhanced_data, status')
-                .eq('user_id', uid)
-                .order('updated_at', { ascending: false });
-
-            console.log("fetchAndAutoLoad: Query result", { fileList, error }); 
-            if (error) throw error;
-            setFiles(fileList);
-
-            if (fileList.length > 0) {
-                console.log("Auto-loading most recent file:", fileList[0].name);
-                loadFileData(fileList[0]);
-            }
-        } catch (e) {
-            console.error("Error fetching files:", e);
-        } finally {
-             console.log("fetchAndAutoLoad: Reached finally block."); 
-             console.log("Setting isCheckingFiles: false (fetchAndAutoLoad finally)"); 
-             setUi(prev => ({ ...prev, isCheckingFiles: false }));
-        }
-    };
-
+    // --- DATA FETCHING (Optimized) ---
     const fetchFiles = async (uid) => {
          if (!supabase || !uid) return;
-        try {
-             const { data: fileList } = await supabase
+         try {
+             const { data: fileList, error } = await supabase
                 .from('question_banks')
-                .select('id, name, updated_at') // Only fetch metadata for list
+                .select('id, name, updated_at')
                 .eq('user_id', uid)
                 .order('updated_at', { ascending: false });
-            if (fileList) setFiles(prev => fileList.map(f => ({...prev.find(p => p.id === f.id), ...f})));
-        } catch (e) { console.error("Error fetching files:", e); }
+             
+             if (!error && fileList) setFiles(fileList);
+         } catch (e) { 
+             console.error("Error fetching files", e);
+         }
     };
 
-    // Save current progress to Supabase
-    const saveProgress = useCallback(async (fileId, currentData, currentStatus) => {
-        if (!supabase || !userId || !fileId) return;
+    const loadFileData = async (fileDoc) => {
+        setUi(prev => ({ ...prev, loading: true }));
         try {
-             await supabase
-                .from('question_banks')
-                .update({
-                    enhanced_data: currentData.enhanced,
-                    status: currentStatus,
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', fileId);
-            // Silently update file list timestamp in background
-            fetchFiles(userId); 
-        } catch (e) {
-            console.error("Auto-save failed:", e);
-        }
-    }, [userId]);
+            // Fetch questions from the NEW table
+            const { data: questions, error } = await supabase
+                .from('questions')
+                .select('id, index, original_data, enhanced_data, status')
+                .eq('bank_id', fileDoc.id)
+                .order('index', { ascending: true });
 
-    const updateDataWithHistory = useCallback((newData, newStatus) => {
-        setData(newData);
-        setStatus(newStatus);
-        setHistory(prev => {
-            const newHistory = prev.slice(0, historyIndex + 1);
-            newHistory.push({ data: newData, status: newStatus });
-            return newHistory;
-        });
-        setHistoryIndex(prev => prev + 1);
-        
-        if (activeFileId) {
-            saveProgress(activeFileId, newData, newStatus);
-        }
-    }, [historyIndex, activeFileId, saveProgress]);
+            if (error) throw error;
+            if (!questions || questions.length === 0) throw new Error("No questions found in this bank.");
 
-    const handleUndo = useCallback(() => {
-        if (historyIndex > 0) {
-            const newIndex = historyIndex - 1;
-            setHistoryIndex(newIndex);
-            setData(history[newIndex].data);
-            setStatus(history[newIndex].status);
-             if (activeFileId) saveProgress(activeFileId, history[newIndex].data, history[newIndex].status);
-        }
-    }, [history, historyIndex, activeFileId, saveProgress]);
-
-    const handleRedo = useCallback(() => {
-        if (historyIndex < history.length - 1) {
-            const newIndex = historyIndex + 1;
-            setHistoryIndex(newIndex);
-            setData(history[newIndex].data);
-            setStatus(history[newIndex].status);
-             if (activeFileId) saveProgress(activeFileId, history[newIndex].data, history[newIndex].status);
-        }
-    }, [history, historyIndex, activeFileId, saveProgress]);
-
-    const loadFileData = (fileDoc) => {
-        try {
-            // Handle Supabase's automatic JSON parsing, no need for JSON.parse if it's already an object
-            const original = typeof fileDoc.original_data === 'string' ? JSON.parse(fileDoc.original_data) : fileDoc.original_data;
-            const enhanced = typeof fileDoc.enhanced_data === 'string' ? JSON.parse(fileDoc.enhanced_data) : fileDoc.enhanced_data;
-            const loadedStatus = typeof fileDoc.status === 'string' ? JSON.parse(fileDoc.status) : fileDoc.status;
-
-            if (!Array.isArray(original) || original.length === 0) throw new Error("Invalid file data");
+            // Reconstruct the arrays for the UI
+            const original = questions.map(q => q.original_data);
+            const enhanced = questions.map(q => q.enhanced_data);
+            const statusMap = questions.reduce((acc, q, i) => ({ ...acc, [i]: q.status }), {});
+            const ids = questions.map(q => q.id);
 
             setData({ original, enhanced });
-            setStatus(loadedStatus || original.reduce((acc, _, i) => ({ ...acc, [i]: 'pending' }), {}));
-            setHistory([{ data: { original, enhanced }, status: loadedStatus }]);
-            setHistoryIndex(0);
+            setStatus(statusMap);
+            setQuestionIds(ids);
+            
+            // Initialize History
+            setHistory([]);
+            setHistoryIndex(-1);
+            
             setActiveFileId(fileDoc.id);
+            saveQueue.current.clear(); // Clear any pending saves from previous file
             setUi(prev => ({ ...prev, idx: 0, showSettings: false }));
+
         } catch (e) {
             console.error("Load failed:", e);
-            alert("Failed to load file data: " + e.message);
+            alert("Failed to load file data. It might be using the old format.");
+        } finally {
+            setUi(prev => ({ ...prev, loading: false }));
         }
     };
 
+    // --- UPLOAD LOGIC (Batched) ---
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file || !userId || !supabase) return;
         setUi(prev => ({ ...prev, isUploading: true }));
+        
         try {
             const text = await file.text();
-            if (!text || text.trim().length === 0) throw new Error("File is empty");
             const json = JSON.parse(text);
-
-             if (!Array.isArray(json)) throw new Error("Root must be an array");
-            
-             const newDoc = {
-                user_id: userId,
-                name: file.name,
-                original_data: json,
-                enhanced_data: json,
-                status: json.reduce((acc, _, i) => ({ ...acc, [i]: 'pending' }), {})
-            };
-
-            const { data: insertedData, error } = await supabase
+            if (!Array.isArray(json)) throw new Error("Root must be an array");
+             
+            // 1. Create Question Bank Header
+            const { data: bank, error: bankError } = await supabase
                 .from('question_banks')
-                .insert(newDoc)
+                .insert({ user_id: userId, name: file.name, status: {} }) 
                 .select()
                 .single();
 
-            if (error) throw error;
+            if (bankError) throw bankError;
 
-            loadFileData(insertedData);
-            await fetchFiles(userId);
+            // 2. Prepare Rows for Batch Insert
+            const rows = json.map((item, i) => ({
+                bank_id: bank.id,
+                user_id: userId,
+                index: i,
+                original_data: item,
+                enhanced_data: item, // Start identical
+                status: 'pending'
+            }));
+
+            // 3. Insert in Chunks (to avoid request size limits)
+            const chunks = chunkArray(rows, 100); // 100 rows per request
+            
+            // We can do this in parallel requests for speed
+            const uploadPromises = chunks.map(chunk => 
+                supabase.from('questions').insert(chunk)
+            );
+            
+            await Promise.all(uploadPromises);
+
+            setFiles(prev => [bank, ...prev]);
+            loadFileData(bank); // Load it back to confirm everything is correct
 
         } catch (err) { 
             console.error("Upload error:", err);
@@ -286,42 +284,214 @@ export default function Home() {
     };
 
     const handleFileDelete = async (fileId) => {
-        if (!userId || !supabase || !confirm("Are you sure you want to delete this file?")) return;
+        if (!userId || !supabase || !confirm("Are you sure?")) return;
         try {
+            // Cascade delete will handle the questions
             await supabase.from('question_banks').delete().eq('id', fileId);
             setFiles(prev => prev.filter(f => f.id !== fileId));
-            if (fileId === activeFileId) {
-                setData({ original: null, enhanced: null });
-                setActiveFileId(null);
-            }
+            if (fileId === activeFileId) handleBackToDashboard();
+        } catch (e) { alert("Failed to delete file."); }
+    };
+
+    // NEW: Download directly from dashboard
+    const handleFileDownload = async (file) => {
+        if (!supabase || !userId) return;
+        document.body.style.cursor = 'wait';
+        try {
+             const { data: questions, error } = await supabase
+                .from('questions')
+                .select('enhanced_data')
+                .eq('bank_id', file.id)
+                .order('index', { ascending: true });
+
+            if (error) throw error;
+            
+            // Map to extract just the json object from the column
+            const exportData = questions.map(q => q.enhanced_data);
+            const a = document.createElement('a');
+            a.href = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+            a.download = `${file.name.replace(/\.json$/i, '')}_enhanced.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
         } catch (e) {
-            alert("Failed to delete file.");
+            console.error("Download failed:", e);
+            alert("Failed to download file.");
+        } finally {
+            document.body.style.cursor = 'default';
         }
     };
 
-    const handleLocalFileLoad = async (e) => {
-         const file = e.target.files[0];
-        if (!file) return;
-        setUi(prev => ({ ...prev, loading: true }));
-        try {
-            const text = await file.text();
-            const json = JSON.parse(text);
-             if (!Array.isArray(json) || json.length === 0) throw new Error("Invalid JSON");
-             const initialData = { original: json, enhanced: JSON.parse(JSON.stringify(json)) };
-             const initialStatus = json.reduce((acc, _, i) => ({ ...acc, [i]: 'pending' }), {});
-             setData(initialData);
-             setStatus(initialStatus);
-             setHistory([{ data: initialData, status: initialStatus }]);
-             setHistoryIndex(0);
-             setActiveFileId(null);
-             setUi(prev => ({ ...prev, idx: 0 }));
-        } catch (err) { 
-            alert("Failed to load local file: " + err.message); 
-        } finally { 
-            setUi(prev => ({ ...prev, loading: false })); 
-        }
-    }
+    // --- ATOMIC SAVING LOGIC (The "Fast as F***" Part) ---
 
+    const processSaveQueue = async () => {
+        if (saveQueue.current.size === 0) return;
+
+        const indicesToSave = Array.from(saveQueue.current);
+        saveQueue.current.clear(); // Clear immediately to capture new changes during save
+        setUi(p => ({ ...p, isSaving: true }));
+
+        try {
+            // Create update promises for each changed question
+            const updates = indicesToSave.map(idx => {
+                const qId = questionIds[idx];
+                if (!qId) return null;
+                
+                return supabase
+                    .from('questions')
+                    .update({
+                        enhanced_data: data.enhanced[idx],
+                        status: status[idx]
+                    })
+                    .eq('id', qId);
+            }).filter(Boolean);
+
+            // Run updates in parallel
+            await Promise.all(updates);
+            
+            // Update timestamp on parent bank (fire and forget)
+            supabase.from('question_banks').update({ updated_at: new Date() }).eq('id', activeFileId);
+
+        } catch (e) {
+            console.error("Save failed:", e);
+            // Re-queue failed items? For now, just alert/log
+        } finally {
+            if (saveQueue.current.size === 0) setUi(p => ({ ...p, isSaving: false }));
+        }
+    };
+
+    // Debounced Saver
+    useEffect(() => {
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        if (saveQueue.current.size > 0) {
+            saveTimeoutRef.current = setTimeout(processSaveQueue, 1000); // Save 1s after last change
+        }
+        return () => clearTimeout(saveTimeoutRef.current);
+    });
+
+    // --- OPTIMIZED HISTORY & UPDATES ---
+
+    const updateDataOptimistic = (idx, newEnhancedItem, newStatus) => {
+        // 1. Create Deep Copy of Previous State to break references
+        // JSON.parse(JSON.stringify()) is a simple way to deep copy for plain data objects
+        const prevEnhanced = JSON.parse(JSON.stringify(data.enhanced[idx]));
+        const prevStatus = status[idx];
+
+        // 2. Update React State Instantly
+        const newDataEnhanced = [...data.enhanced];
+        newDataEnhanced[idx] = newEnhancedItem;
+        
+        setData(p => ({ ...p, enhanced: newDataEnhanced }));
+        setStatus(p => ({ ...p, [idx]: newStatus }));
+
+        // 3. Add to History (Diff only)
+        // We store the DEEP COPIED previous state, so it's safe from future mutations
+        const newHistoryItem = {
+            idx,
+            prev: { enhanced: prevEnhanced, status: prevStatus },
+            next: { enhanced: newEnhancedItem, status: newStatus }
+        };
+        
+        const newHistory = history.slice(0, historyIndex + 1);
+        newHistory.push(newHistoryItem);
+        setHistory(newHistory);
+        setHistoryIndex(newHistory.length - 1);
+
+        // 4. Queue for Cloud Save
+        saveQueue.current.add(idx);
+        setUi(p => ({ ...p, isSaving: true })); // Visual feedback
+    };
+
+    const handleUndo = useCallback(() => {
+        if (historyIndex < 0) return;
+        const item = history[historyIndex];
+        
+        // Revert State
+        const newDataEnhanced = [...data.enhanced];
+        // Use the deep-copied previous state
+        newDataEnhanced[item.idx] = item.prev.enhanced;
+        
+        setData(p => ({ ...p, enhanced: newDataEnhanced }));
+        setStatus(p => ({ ...p, [item.idx]: item.prev.status }));
+
+        setHistoryIndex(prev => prev - 1);
+        
+        // Ensure the reverted state is saved to DB
+        saveQueue.current.add(item.idx);
+        setUi(p => ({ ...p, isSaving: true }));
+    }, [history, historyIndex, data]);
+
+    const handleRedo = useCallback(() => {
+        if (historyIndex >= history.length - 1) return;
+        const item = history[historyIndex + 1];
+
+        // Apply Next State
+        const newDataEnhanced = [...data.enhanced];
+        newDataEnhanced[item.idx] = item.next.enhanced;
+        
+        setData(p => ({ ...p, enhanced: newDataEnhanced }));
+        setStatus(p => ({ ...p, [item.idx]: item.next.status }));
+
+        setHistoryIndex(prev => prev + 1);
+        
+        // Ensure the re-applied state is saved to DB
+        saveQueue.current.add(item.idx);
+        setUi(p => ({ ...p, isSaving: true }));
+    }, [history, historyIndex, data]);
+
+    // --- ACTION HANDLERS ---
+
+    // NEW: Handler for direct question updates (from Image editing, etc.)
+    const handleQuestionUpdate = (newQuestionData) => {
+        // Keep current status (or mark as enhanced/approved if you prefer)
+        const currentStatus = status[ui.idx];
+        updateDataOptimistic(ui.idx, newQuestionData, currentStatus);
+    };
+
+    const handleApprove = () => {
+        updateDataOptimistic(ui.idx, data.enhanced[ui.idx], 'approved');
+        if (ui.idx < data.original.length - 1) setUi(p => ({ ...p, idx: p.idx + 1 }));
+    };
+
+    const handleApproveOriginal = () => {
+        const originalItem = data.original[ui.idx];
+        // Create a copy of enhanced but with original text/images
+        const revertedItem = {
+            ...data.enhanced[ui.idx],
+            explanation_html: originalItem.explanation_html,
+            explanation_text: originalItem.explanation_text,
+            explanation_images: originalItem.explanation_images
+        };
+        updateDataOptimistic(ui.idx, revertedItem, 'approved');
+        if (ui.idx < data.original.length - 1) setUi(p => ({ ...p, idx: p.idx + 1 }));
+    };
+
+    const handleBatchApprove = () => {
+        // Batch approve is complex with atomic rows. 
+        // Strategy: Update local state for all, queue all indices.
+        const newStatus = { ...status };
+        const indices = [];
+        
+        Object.keys(status).forEach(key => {
+            const idx = parseInt(key);
+            if (status[idx] === 'enhanced' || status[idx] === 'batch-enhanced') {
+                newStatus[idx] = 'approved';
+                indices.push(idx);
+                saveQueue.current.add(idx);
+            }
+        });
+
+        if (indices.length === 0) return alert("Nothing to approve.");
+
+        // We don't support full undo for batch yet to keep history simple, or we group them.
+        // For now, simple state update.
+        setStatus(newStatus);
+        setUi(p => ({ ...p, isSaving: true }));
+        // Trigger save immediately for batch
+        processSaveQueue(); 
+    };
+
+    // Gemini Logic
     const enhanceQuestionAtIndex = async (index, isBatch = false) => {
         if (!apiKey) throw new Error("API Key missing");
         if (!isBatch) setStatus(prev => ({ ...prev, [index]: 'enhancing' }));
@@ -350,7 +520,6 @@ export default function Home() {
             const result = await model.generateContent([prompt.sys, ...imgParts, prompt.user]);
             const responseText = await result.response.text();
             const cleaned = cleanOutputExplanation(responseText);
-            
             if (!cleaned) throw new Error("Gemini returned empty or invalid format");
 
             return {
@@ -359,9 +528,8 @@ export default function Home() {
                 explanation_text: cleanHtmlForPrompt(cleaned),
                 status: isBatch ? 'batch-enhanced' : 'enhanced'
             };
-
         } catch (e) {
-            console.error(`Enhance error at index ${index}:`, e);
+            console.error(e);
             if (!isBatch) setStatus(prev => ({ ...prev, [index]: 'error' }));
             throw e;
         }
@@ -371,87 +539,67 @@ export default function Home() {
         if (!apiKey) return alert("Enter API Key first");
         try {
             const result = await enhanceQuestionAtIndex(ui.idx);
-            const newEnhanced = [...data.enhanced];
-            newEnhanced[result.index] = { ...newEnhanced[result.index], explanation_html: result.explanation_html, explanation_text: result.explanation_text };
-            updateDataWithHistory({ ...data, enhanced: newEnhanced }, { ...status, [result.index]: result.status });
-        } catch (e) {
-            alert("Enhance failed: " + (e.message || "Unknown error"));
-        }
+            const newEnhancedItem = { 
+                ...data.enhanced[ui.idx], 
+                explanation_html: result.explanation_html, 
+                explanation_text: result.explanation_text 
+            };
+            updateDataOptimistic(ui.idx, newEnhancedItem, result.status);
+        } catch (e) { alert("Enhance failed."); }
     };
 
     const handleBatchEnhance = async () => {
         if (!apiKey) return alert("Enter API Key first");
         const startIdx = ui.idx;
         const endIdx = Math.min(startIdx + ui.batchSize, data.original.length);
-        const indicesToProcess = [];
+        const indices = [];
         for (let i = startIdx; i < endIdx; i++) {
-            if (status[i] === 'pending' || status[i] === 'error') indicesToProcess.push(i);
+            if (status[i] === 'pending' || status[i] === 'error') indices.push(i);
         }
+        if (indices.length === 0) return alert("No pending questions.");
 
-        if (indicesToProcess.length === 0) return alert("No pending questions to enhance in this range.");
-
-        setUi(p => ({ ...p, isBatchRunning: true, batchProgress: { current: 0, total: indicesToProcess.length } }));
-
-        let completed = 0;
-        let currentDataEnhanced = [...data.enhanced];
-        let currentStatus = { ...status };
-
-        for (const idx of indicesToProcess) {
+        setUi(p => ({ ...p, isBatchRunning: true, batchProgress: { current: 0, total: indices.length } }));
+        
+        // Process sequentially or parallel? Parallel is faster but might hit rate limits.
+        // Let's do sequential for safety, but update UI optimistically.
+        for (const idx of indices) {
             try {
-                setUi(p => ({ ...p, idx, batchProgress: { ...p.batchProgress, current: completed + 1 } }));
+                setUi(p => ({ ...p, idx, batchProgress: { ...p.batchProgress, current: (p.batchProgress.current || 0) + 1 } }));
                 setStatus(prev => ({...prev, [idx]: 'enhancing'}));
+                
                 const result = await enhanceQuestionAtIndex(idx, true);
-                currentDataEnhanced[idx] = { ...currentDataEnhanced[idx], explanation_html: result.explanation_html, explanation_text: result.explanation_text };
-                currentStatus[idx] = result.status;
-                completed++;
-            } catch (e) {
-                console.warn(`Batch: failed at ${idx}`, e);
-                currentStatus[idx] = 'error';
+                const newEnhancedItem = { 
+                    ...data.enhanced[idx], 
+                    explanation_html: result.explanation_html, 
+                    explanation_text: result.explanation_text 
+                };
+                
+                // Directly update state without history for batch to save memory
+                setData(prev => {
+                    const next = [...prev.enhanced];
+                    next[idx] = newEnhancedItem;
+                    return { ...prev, enhanced: next };
+                });
+                setStatus(prev => ({...prev, [idx]: result.status}));
+                
+                // Queue for save
+                saveQueue.current.add(idx);
+
+            } catch (e) { 
+                setStatus(prev => ({...prev, [idx]: 'error'}));
             }
-             setStatus({...currentStatus});
         }
-        updateDataWithHistory({ ...data, enhanced: currentDataEnhanced }, currentStatus);
+        
         setUi(p => ({ ...p, isBatchRunning: false, idx: startIdx }));
+        processSaveQueue(); // Save all batch changes
     };
 
-    const handleBatchApprove = () => {
-        const newStatus = { ...status };
-        let approvedCount = 0;
-        Object.keys(status).forEach(idx => {
-            if (status[idx] === 'enhanced' || status[idx] === 'batch-enhanced') {
-                newStatus[idx] = 'approved';
-                approvedCount++;
-            }
-        });
-        if (approvedCount === 0) {
-            alert("No enhanced questions to approve.");
-            return;
-        }
-        updateDataWithHistory(data, newStatus);
-    };
-
-    const handleApprove = () => {
-        const newStatus = { ...status, [ui.idx]: 'approved' };
-        updateDataWithHistory(data, newStatus);
-        if (ui.idx < data.original.length - 1) setUi(p => ({ ...p, idx: p.idx + 1 }));
-    };
-
-    const handleApproveOriginal = () => {
-        const newEnhanced = [...data.enhanced];
-        newEnhanced[ui.idx] = { 
-            ...newEnhanced[ui.idx], 
-            explanation_html: data.original[ui.idx].explanation_html,
-            explanation_text: data.original[ui.idx].explanation_text,
-            explanation_images: data.original[ui.idx].explanation_images
-        };
-        const newData = { ...data, enhanced: newEnhanced };
-        const newStatus = { ...status, [ui.idx]: 'approved' };
-        updateDataWithHistory(newData, newStatus);
-        if (ui.idx < data.original.length - 1) setUi(p => ({ ...p, idx: p.idx + 1 }));
-    };
-
+    // DOWNLOAD FUNCTION UPDATED TO DOWNLOAD CURRENT STATE
     const downloadJSON = () => {
+        // We use 'data.enhanced' which holds the current, in-memory state of all questions
+        // This includes all your recent approvals, edits, and changes.
         if (!data.enhanced) return;
+
         const a = document.createElement('a');
         a.href = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data.enhanced, null, 2));
         a.download = "enhanced_questions.json";
@@ -474,37 +622,20 @@ export default function Home() {
             <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
                 <div className="flex flex-col items-center gap-3 text-indigo-600 dark:text-indigo-400">
                     <Loader2 className="w-10 h-10 animate-spin" />
-                    <p className="text-sm font-medium dark:text-slate-300">Loading your workspace...</p>
+                    <p className="text-sm font-medium dark:text-slate-300">Loading...</p>
                 </div>
             </div>
         );
     }
 
-    if (!data.original) {
-        return (
-            <UploadScreen
-                apiKey={apiKey}
-                setApiKey={setApiKey}
-                toggleDarkMode={toggleDarkMode}
-                isDarkMode={isDarkMode}
-                setUi={setUi}
-                files={files}
-                handleLocalFileLoad={handleLocalFileLoad}
-                ui={ui}
-                // Auth props
-                userId={userId}
-                handleLogin={handleLogin}
-                handleLogout={handleLogout}
-                isCheckingFiles={ui.isCheckingFiles}
-                // SettingsModal props
-                handleFileUpload={handleFileUpload}
-                handleFileDelete={handleFileDelete}
-                loadFileData={loadFileData}
-                supabase={supabase}
-                activeFileId={activeFileId}
-            />
-        );
-    }
+    if (!userId) return <LandingPage handleLogin={handleLogin} toggleDarkMode={toggleDarkMode} isDarkMode={isDarkMode} />;
+    if (!data.original) return <Dashboard 
+        apiKey={apiKey} setApiKey={setApiKey} toggleDarkMode={toggleDarkMode} isDarkMode={isDarkMode} 
+        setUi={setUi} files={files} ui={ui} userId={userId} handleLogout={handleLogout} 
+        isCheckingFiles={ui.isCheckingFiles} handleFileUpload={handleFileUpload} 
+        handleFileDelete={handleFileDelete} loadFileData={loadFileData} activeFileId={activeFileId}
+        handleFileDownload={handleFileDownload} 
+    />;
 
     return (
         <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden">
@@ -513,77 +644,19 @@ export default function Home() {
                     <div className="h-full bg-indigo-600 dark:bg-indigo-500 transition-all duration-300 ease-out" style={{ width: `${(ui.batchProgress.current / ui.batchProgress.total) * 100}%` }} />
                 </div>
             )}
-
-            <AppHeader
-                ui={ui}
-                setUi={setUi}
-                activeFileId={activeFileId}
-                files={files}
-                stats={stats}
-                handleBatchEnhance={handleBatchEnhance}
-                handleBatchApprove={handleBatchApprove}
-                apiKey={apiKey}
-                handleUndo={handleUndo}
-                historyIndex={historyIndex}
-                handleRedo={handleRedo}
-                history={history}
-                toggleDarkMode={toggleDarkMode}
-                isDarkMode={isDarkMode}
-                downloadJSON={downloadJSON}
-                handleLogout={handleLogout}
-            />
-
+            <AppHeader ui={ui} setUi={setUi} activeFileId={activeFileId} files={files} stats={stats} handleBatchEnhance={handleBatchEnhance} handleBatchApprove={handleBatchApprove} apiKey={apiKey} handleUndo={handleUndo} historyIndex={historyIndex} handleRedo={handleRedo} history={history} toggleDarkMode={toggleDarkMode} isDarkMode={isDarkMode} downloadJSON={downloadJSON} handleLogout={handleLogout} handleBackToDashboard={handleBackToDashboard} />
             <div className="flex-1 flex overflow-hidden relative">
-                <Sidebar
-                    ui={ui}
-                    setUi={setUi}
-                    subjects={subjects}
-                    filteredList={filteredList}
-                    status={status}
-                    data={data}
-                />
-
-                <EditorView
-                    ui={ui}
-                    setUi={setUi}
-                    data={data}
-                    status={status}
-                    handleApproveOriginal={handleApproveOriginal}
-                    handleEnhance={handleEnhance}
-                    handleApprove={handleApprove}
+                <Sidebar ui={ui} setUi={setUi} subjects={subjects} filteredList={filteredList} status={status} data={data} />
+                <EditorView 
+                    ui={ui} setUi={setUi} data={data} status={status} 
+                    handleApproveOriginal={handleApproveOriginal} 
+                    handleEnhance={handleEnhance} handleApprove={handleApprove} 
                     isKatexLoaded={isKatexLoaded}
+                    onUpdateQuestion={handleQuestionUpdate} 
                 />
             </div>
-            
-            <JsonViewerModal 
-                isOpen={ui.showJson} 
-                onClose={() => setUi(p => ({...p, showJson: false}))} 
-                data={data.enhanced} 
-                isKatexLoaded={isKatexLoaded}
-            />
-            <SettingsModal 
-                isOpen={ui.showSettings} 
-                onClose={() => setUi(p => ({...p, showSettings: false}))}
-                files={files}
-                onUpload={handleFileUpload}
-                onDelete={handleFileDelete}
-                onLoad={(file) => {
-                    if (!file.original_data) {
-                         supabase.from('question_banks').select('*').eq('id', file.id).single().then(({ data }) => {
-                             if (data) loadFileData(data);
-                         });
-                    } else {
-                        loadFileData(file);
-                    }
-                }}
-                isUploading={ui.isUploading}
-                userId={userId}
-                activeFileId={activeFileId}
-                // Auth props
-                handleLogin={handleLogin}
-                handleLogout={handleLogout}
-                isCheckingFiles={ui.isCheckingFiles}
-            />
+            <JsonViewerModal isOpen={ui.showJson} onClose={() => setUi(p => ({...p, showJson: false}))} data={data.enhanced} isKatexLoaded={isKatexLoaded} />
+            <SettingsModal isOpen={ui.showSettings} onClose={() => setUi(p => ({...p, showSettings: false}))} files={files} onUpload={handleFileUpload} onDelete={handleFileDelete} onLoad={loadFileData} isUploading={ui.isUploading} userId={userId} activeFileId={activeFileId} handleLogin={handleLogin} handleLogout={handleLogout} isCheckingFiles={ui.isCheckingFiles} />
         </div>
     );
 }

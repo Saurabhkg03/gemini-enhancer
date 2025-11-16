@@ -10,12 +10,14 @@ import { QuestionCard } from './QuestionCard';
 export const EditorView = ({
     ui, setUi, data, status,
     handleApproveOriginal, handleEnhance, handleApprove,
-    isKatexLoaded
+    isKatexLoaded,
+    onUpdateQuestion
 }) => {
     const currentSt = status[ui.idx];
 
     return (
         <main className="flex-1 min-h-0 flex flex-col overflow-hidden bg-slate-50/50 dark:bg-slate-950/50 w-full">
+            {/* Pagination Header */}
             <div className="bg-white dark:bg-slate-900 px-4 sm:px-6 py-3 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center flex-shrink-0 flex-wrap gap-3">
                 <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
                     <button onClick={() => setUi(p => ({ ...p, idx: Math.max(0, p.idx - 1) }))} disabled={ui.idx === 0} className="p-1.5 sm:p-2 hover:bg-white dark:hover:bg-slate-700 rounded-md disabled:opacity-50 transition-all shadow-sm dark:shadow-none disabled:shadow-none"><ChevronLeft className="w-4 h-4 text-slate-600 dark:text-slate-400" /></button>
@@ -36,12 +38,30 @@ export const EditorView = ({
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                <div className="h-full min-h-[400px] lg:min-h-0">
-                    <QuestionCard question={data.original[ui.idx]} title="Original Version" isKatexLoaded={isKatexLoaded} />
-                </div>
-                <div className={`flex flex-col h-full min-h-[400px] lg:min-h-0 transition-all duration-500 ${currentSt === 'enhancing' ? 'opacity-50 scale-[0.98] blur-[1px]' : 'opacity-100 scale-100'}`}>
-                    <QuestionCard question={data.enhanced[ui.idx]} title="AI Enhanced Version" type="enhanced" isKatexLoaded={isKatexLoaded} />
+            {/* Scrollable Content Area */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 pb-10">
+                    {/* Original Card */}
+                    <div className="h-auto">
+                        <QuestionCard 
+                            question={data.original[ui.idx]} 
+                            title="Original Version" 
+                            isKatexLoaded={isKatexLoaded} 
+                            autoHeight={true} // Allow full height
+                        />
+                    </div>
+                    
+                    {/* Enhanced Card */}
+                    <div className={`h-auto flex flex-col transition-all duration-500 ${currentSt === 'enhancing' ? 'opacity-50 scale-[0.99] blur-[1px]' : 'opacity-100 scale-100'}`}>
+                        <QuestionCard 
+                            question={data.enhanced[ui.idx]} 
+                            title="AI Enhanced Version" 
+                            type="enhanced" 
+                            isKatexLoaded={isKatexLoaded}
+                            onUpdate={onUpdateQuestion}
+                            autoHeight={true} // Allow full height
+                        />
+                    </div>
                 </div>
             </div>
         </main>
