@@ -1,466 +1,23 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { Loader2 } from 'lucide-react';
+
+// Libs, Hooks, and Components
+import { supabase } from './lib/supabase';
 import { 
-    Sparkles, Loader2, UploadCloud, Download, CheckCircle2, 
-    ChevronLeft, ChevronRight, Check, BookOpen, ChevronDown,
-    AlertCircle, FileText, Zap, RotateCcw, RotateCw, Eye, X, Copy,
-    FastForward, Menu, CheckCheck, Code, List, Cog, Trash2, Plus, File,
-    Moon, Sun
-} from 'lucide-react';
-import { createClient } from '@supabase/supabase-js';
-
-// --- SUPABASE SETUP ---
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const supabase = (supabaseUrl && supabaseAnonKey) 
-    ? createClient(supabaseUrl, supabaseAnonKey) 
-    : null;
-
-// --- PROMPTS (Unchanged) ---
-const PROMPTS = {
-    MULTIMODAL: `You are an expert revision tutor. Provide a CONCISE, clear explanation for the "QUESTION" based on provided images.
-
-Formatting Rules (STRICT):
-1. Output MUST be clean HTML. Do NOT use markdown code blocks (\`\`\`).
-2. Structure:
-   - Use <h3> for short section headers (e.g., <h3>Analysis</h3>).
-   - Use <ul> or <ol> for steps and given values.
-   - Use <p> for standard text.
-3. Math:
-   - Block equations: wrap in $$...$$ and place on their own line.
-   - Inline math: wrap in $...$.
-4. Brevity: Skip lengthy derivations if standard. Focus on key steps to reach the solution.
-
-Final Output Template:
-<div class="mtq_explanation-text space-y-3">
-  <h3>Key Concept</h3>
-  <p>...concise explanation...</p>
-  <h3>Solution</h3>
-  <ul>
-    <li>Step 1: ...</li>
-    <li>Step 2: ... $$ formula $$</li>
-  </ul>
-  <p><b>Final Answer: ...</b></p>
-</div>`,
-
-    REPHRASE: `You are an expert technical editor. Rewrite the "ORIGINAL EXPLANATION" to be CONCISE, structured, and professional.
-
-Goals:
-1. SHORTEN: Remove redundant words and filler text. Make it punchy.
-2. FORMAT: Use HTML (<h3>, <ul>, <p>) to break up wall-of-text paragraphs.
-3. MATH: Ensure all math uses strict LaTeX delimiters ($...$ inline, $$...$$ block).
-
-Output ONLY the revised HTML wrapped in <div class="mtq_explanation-text space-y-3">...</div>.`,
-
-    TEXT_GEN: `You are an expert revision tutor. Provide a CONCISE step-by-step solution for the "QUESTION".
-
-Formatting Rules (STRICT):
-1. NO markdown blocks. Output raw HTML only.
-2. Use 3 for headers, <ul>/<ol> for steps, <p> for text.
-3. Use $$...$$ for block math, $...$ for inline math.
-4. Keep it short and direct. Focus on the mathematical steps.
-
-Final Output Template:
-<div class="mtq_explanation-text space-y-3">
-  <h3>Analysis</h3>
-  <p>...</p>
-  <h3>Derivation</h3>
-  <ol>
-     <li>... $$ math $$</li>
-     <li>...</li>
-  </ol>
-  <p><b>Conclusion: ...</b></p>
-</div>`
-};
-
-// --- UTILITIES ---
-const cleanHtmlForPrompt = (html) => html ? html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : "";
-const cleanOutputExplanation = (text) => {
-    if (!text) return "";
-    const match = text.match(/<div class="mtq_explanation-text">[\s\S]*?<\/div>/);
-    if (match) return match[0];
-    return text.replace(/```html/g, '').replace(/```/g, '').trim();
-};
-const urlToGenerativePart = async (url) => {
-    try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Failed to fetch`);
-        const blob = await response.blob();
-        
-        if (blob.type === 'image/svg+xml') {
-            console.warn("Skipping unsupported SVG image:", url);
-            return null;
-        }
-
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve({ inlineData: { data: reader.result.split(',')[1], mimeType: blob.type } });
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
-    } catch (e) { console.warn("Image skip:", url); return null; }
-};
-
-// --- HOOKS ---
-const useKatex = () => {
-    const [isLoaded, setIsLoaded] = useState(false);
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        if (window.renderMathInElement) { setIsLoaded(true); return; }
-        
-        const loadCSS = href => { 
-            if (document.querySelector(`link[href="${href}"]`)) return;
-            const link = document.createElement('link'); 
-            link.rel = 'stylesheet'; 
-            link.href = href; 
-            link.crossOrigin = 'anonymous'; 
-            document.head.appendChild(link); 
-        };
-        const loadScript = src => new Promise((res, rej) => { 
-            if (document.querySelector(`script[src="${src}"]`)) { res(); return; }
-            const script = document.createElement('script'); 
-            script.src = src; 
-            script.crossOrigin = 'anonymous'; 
-            script.onload = res; 
-            script.onerror = rej; 
-            document.head.appendChild(script); 
-        });
-
-        loadCSS("https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css");
-        loadScript("https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js")
-            .then(() => loadScript("https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"))
-            .then(() => setIsLoaded(true))
-            .catch(e => console.error("KaTeX failed to load", e));
-    }, []);
-    return isLoaded;
-};
-
-const useDarkMode = () => {
-    const [isDarkMode, setIsDarkMode] = useState(false);
-
-    useEffect(() => {
-        const savedTheme = localStorage.getItem('theme');
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        
-        if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
-            setIsDarkMode(true);
-            document.documentElement.classList.add('dark');
-        } else {
-            setIsDarkMode(false);
-            document.documentElement.classList.remove('dark');
-        }
-    }, []);
-
-    const toggleDarkMode = () => {
-        setIsDarkMode(prev => {
-            const newMode = !prev;
-            if (newMode) {
-                document.documentElement.classList.add('dark');
-                localStorage.setItem('theme', 'dark');
-            } else {
-                document.documentElement.classList.remove('dark');
-                localStorage.setItem('theme', 'light');
-            }
-            return newMode;
-        });
-    };
-
-    return { isDarkMode, toggleDarkMode };
-};
-
-// --- COMPONENTS ---
-const Button = ({ children, variant = 'primary', className = '', disabled, ...props }) => {
-    const variants = {
-        primary: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-md shadow-indigo-200/50 dark:shadow-none disabled:shadow-none disabled:from-slate-400 disabled:to-slate-500 dark:disabled:from-slate-600 dark:disabled:to-slate-700",
-        success: "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-md shadow-emerald-200/50 dark:shadow-none disabled:shadow-none disabled:from-slate-400 disabled:to-slate-500 dark:disabled:from-slate-600 dark:disabled:to-slate-700",
-        outline: "border-2 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:bg-slate-50 dark:disabled:bg-slate-800/50 disabled:text-slate-400 dark:disabled:text-slate-500 disabled:border-slate-100 dark:disabled:border-slate-800",
-        ghost: "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:text-slate-400 dark:disabled:text-slate-600 disabled:hover:bg-transparent",
-    };
-    return (
-        <button 
-            disabled={disabled}
-            className={`px-3 sm:px-4 py-2 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-70 disabled:pointer-events-none ${variants[variant]} ${className}`}
-            {...props}
-        >
-            {children}
-        </button>
-    );
-};
-
-const LatexText = ({ text, images = [], isKatexLoaded }) => {
-    const ref = useRef(null);
-
-    useEffect(() => {
-        if (!ref.current || !window.renderMathInElement) return;
-        
-        let processedText = (text || '')
-            .replace(/\[latex\]/g, '\\(')
-            .replace(/\[\/latex\]/g, '\\)')
-            .replace(/\n/g, '<br/>');
-
-        ref.current.innerHTML = processedText;
-
-        if (isKatexLoaded) {
-             setTimeout(() => {
-                try {
-                    window.renderMathInElement(ref.current, {
-                        delimiters: [
-                            { left: "$$", right: "$$", display: true },
-                            { left: "\\[", right: "\\]", display: true },
-                            { left: "$", right: "$", display: false },
-                            { left: "\\(", right: "\\)", display: false }
-                        ],
-                        throwOnError: false,
-                        trust: true 
-                    });
-                } catch (e) {
-                    console.warn("KaTeX render warning:", e);
-                }
-             }, 0);
-        }
-    }, [text, isKatexLoaded]);
-
-    return (
-        <div className="space-y-4 w-full">
-            <div ref={ref} className="prose prose-slate dark:prose-invert max-w-none prose-p:leading-relaxed prose-headings:font-semibold prose-strong:text-indigo-900 dark:prose-strong:text-indigo-300 text-slate-700 dark:text-slate-300 break-words text-sm sm:text-base" />
-            {images?.length > 0 && (
-                <div className="flex flex-wrap gap-3 mt-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-700">
-                    {images.map((img, idx) => (
-                        <img key={idx} src={img.original_url || img.local_path} alt="Figure" className="h-24 sm:h-32 w-auto object-contain rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1" onError={(e) => {e.target.src="https://placehold.co/400x300?text=Image+Error"}} />
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-};
-
-const QuestionCard = ({ question, title, type = 'original', isKatexLoaded, autoHeight = false }) => {
-    const [isOpen, setIsOpen] = useState(true);
-    if (!question || (Object.keys(question).length === 0)) return (
-        <div className="h-full flex items-center justify-center bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 p-4 text-center">
-            No data available
-        </div>
-    );
-    
-    const isEnhanced = type === 'enhanced';
-
-    return (
-        <div className={`flex flex-col ${autoHeight ? 'h-auto' : 'h-full min-h-0'} bg-white dark:bg-slate-900 rounded-2xl shadow-sm dark:shadow-none border transition-all duration-300 overflow-hidden ${isEnhanced ? 'border-violet-200 dark:border-violet-900/50 shadow-violet-50 dark:shadow-none' : 'border-slate-200 dark:border-slate-800'}`}>
-            <div className={`px-4 sm:px-6 py-3 sm:py-4 border-b flex items-center justify-between flex-shrink-0 ${isEnhanced ? 'bg-violet-50/50 dark:bg-violet-900/20 border-violet-100 dark:border-violet-900/50' : 'bg-slate-50/80 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800'}`}>
-                <h3 className={`font-bold flex items-center gap-2 text-sm sm:text-base ${isEnhanced ? 'text-violet-700 dark:text-violet-300' : 'text-slate-700 dark:text-slate-300'}`}>
-                    {isEnhanced ? <Sparkles className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-                    {title}
-                </h3>
-            </div>
-            <div className={`flex-1 ${autoHeight ? '' : 'min-h-0 overflow-y-auto'} p-4 sm:p-6 custom-scrollbar space-y-6`}>
-                <div>
-                    <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2 sm:mb-3">Question</h4>
-                    <LatexText text={question.question_text || question.question_html} images={question.question_images} isKatexLoaded={isKatexLoaded} />
-                </div>
-                {question.question_type === 'mcq' && question.options && (
-                    <div className="space-y-2.5">
-                         <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2 sm:mb-3">Options</h4>
-                        {question.options.map((opt, idx) => (
-                            <div key={idx} className={`p-2 sm:p-3 rounded-xl border flex items-start gap-2 sm:gap-3 transition-colors ${opt.is_correct ? 'bg-emerald-50/50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-900/50' : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'}`}>
-                                <span className={`flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full text-xs sm:text-sm font-bold ${opt.is_correct ? 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>{opt.label}</span>
-                                <div className="flex-1 pt-0.5"><LatexText text={opt.text || opt.text_html} isKatexLoaded={isKatexLoaded} /></div>
-                                {opt.is_correct && <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500 dark:text-emerald-400 flex-shrink-0" />}
-                            </div>
-                        ))}
-                    </div>
-                )}
-                <div className={`rounded-xl border overflow-hidden flex-shrink-0 ${isEnhanced ? 'border-violet-200 dark:border-violet-900/30' : 'border-slate-200 dark:border-slate-800'}`}>
-                    <button onClick={() => setIsOpen(!isOpen)} className={`w-full flex items-center justify-between p-3 text-sm font-medium transition-colors ${isEnhanced ? 'bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/30' : 'bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
-                        <span className="flex items-center gap-2"><BookOpen className="w-4 h-4" /> Explanation</span>
-                        {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                    </button>
-                    {isOpen && (
-                        <div className={`p-4 ${isEnhanced ? 'bg-violet-50/30 dark:bg-violet-900/10' : 'bg-white dark:bg-slate-900'}`}>
-                            <LatexText text={question.explanation_text || question.explanation_html} images={question.explanation_images} isKatexLoaded={isKatexLoaded} />
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const JsonViewerModal = ({ isOpen, onClose, data, isKatexLoaded }) => {
-    const [copied, setCopied] = useState(false);
-    const [viewMode, setViewMode] = useState('visual');
-
-    useEffect(() => {
-        if (isOpen) setViewMode('visual');
-    }, [isOpen]);
-
-    if (!isOpen) return null;
-
-    const handleCopy = () => {
-        navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 sm:p-6">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-5xl h-[90vh] flex flex-col shadow-2xl animate-in fade-in zoom-in duration-200 border border-slate-200 dark:border-slate-800">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
-                    <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                        {viewMode === 'visual' ? <Sparkles className="w-5 h-5 text-violet-600 dark:text-violet-400" /> : <FileText className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />}
-                        {viewMode === 'visual' ? 'Visual Preview' : 'Raw JSON'}
-                    </h3>
-                    <div className="flex items-center gap-3">
-                        <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
-                            <button 
-                                onClick={() => setViewMode('visual')}
-                                className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${viewMode === 'visual' ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                            >
-                                <List className="w-4 h-4" /> <span className="hidden sm:inline">Visual</span>
-                            </button>
-                            <button 
-                                onClick={() => setViewMode('json')}
-                                className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${viewMode === 'json' ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                            >
-                                <Code className="w-4 h-4" /> <span className="hidden sm:inline">JSON</span>
-                            </button>
-                        </div>
-
-                        <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block" />
-
-                        <Button variant="outline" onClick={handleCopy} className="!py-1.5 !px-3 text-sm hidden sm:flex">
-                            {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
-                            {copied ? 'Copied!' : 'Copy'}
-                        </Button>
-                        <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
-                            <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
-                        </button>
-                    </div>
-                </div>
-                
-                <div className="flex-1 overflow-hidden bg-slate-50 dark:bg-slate-950">
-                    {viewMode === 'json' ? (
-                         <div className="h-full overflow-auto p-6 custom-scrollbar">
-                            <pre className="text-sm font-mono text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-all bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                {JSON.stringify(data, null, 2)}
-                            </pre>
-                        </div>
-                    ) : (
-                        <div className="h-full overflow-y-auto p-4 sm:p-6 custom-scrollbar space-y-6">
-                            {data && data.length > 0 ? (
-                                data.map((item, index) => (
-                                    <div key={index} className="mb-6 last:mb-0">
-                                        <div className="flex items-center gap-2 mb-2 px-2">
-                                            <span className="text-sm font-medium text-slate-500 dark:text-slate-400">#{index + 1}</span>
-                                            {item.subject && <span className="text-xs px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full">{item.subject}</span>}
-                                        </div>
-                                        <QuestionCard 
-                                            question={item}
-                                            title={`Enhanced Question ${index + 1}`}
-                                            type="enhanced"
-                                            isKatexLoaded={isKatexLoaded}
-                                            autoHeight={true}
-                                        />
-                                    </div>
-                                ))
-                            ) : (
-                                <div className="flex items-center justify-center h-full text-slate-400 dark:text-slate-600">
-                                    No data to preview
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-};
-
-// --- SETTINGS MODAL ---
-const SettingsModal = ({ isOpen, onClose, files, onUpload, onDelete, onLoad, isUploading, userId, activeFileId }) => {
-    if (!isOpen) return null;
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
-            <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md flex flex-col shadow-2xl animate-in fade-in zoom-in duration-200 border border-slate-200 dark:border-slate-800" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
-                    <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                        <Cog className="w-5 h-5 text-slate-600 dark:text-slate-400" /> Settings
-                    </h3>
-                    <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
-                        <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
-                    </button>
-                </div>
-                <div className="p-6 space-y-6">
-                    <div>
-                        <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-3 flex justify-between items-center">
-                            Saved Question Banks
-                            {files.length > 0 && <span className="text-xs font-medium px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-600 dark:text-slate-400">{files.length}</span>}
-                        </h4>
-                        {userId ? (
-                             <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
-                                {files.length === 0 ? (
-                                    <div className="text-sm text-slate-500 dark:text-slate-400 italic p-6 text-center bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 flex flex-col items-center gap-2">
-                                        <File className="w-8 h-8 text-slate-300 dark:text-slate-600" />
-                                        <p>No files saved yet.</p>
-                                    </div>
-                                ) : (
-                                    files.map(file => (
-                                        <div key={file.id} className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${file.id === activeFileId ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-900/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700'} group`}>
-                                            <div className="flex items-center gap-3 overflow-hidden">
-                                                <div className={`p-2 rounded-lg border shrink-0 ${file.id === activeFileId ? 'bg-indigo-100 dark:bg-indigo-900/50 border-indigo-200 dark:border-indigo-800' : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'}`}>
-                                                    <FileText className={`w-4 h-4 ${file.id === activeFileId ? 'text-indigo-700 dark:text-indigo-300' : 'text-indigo-600 dark:text-indigo-400'}`} />
-                                                </div>
-                                                <div className="overflow-hidden">
-                                                    <p className={`text-sm font-medium truncate ${file.id === activeFileId ? 'text-indigo-900 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`} title={file.name}>{file.name}</p>
-                                                    <p className={`text-xs ${file.id === activeFileId ? 'text-indigo-400 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500'}`}>
-                                                        {new Date(file.updated_at).toLocaleDateString()}
-                                                        {file.id === activeFileId && <span className="ml-2 font-semibold text-indigo-600 dark:text-indigo-400">— Active</span>}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-2 shrink-0 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                                                 {file.id !== activeFileId && (
-                                                    <Button variant="primary" onClick={() => onLoad(file)} className="!py-1.5 !px-3 text-xs">Load</Button>
-                                                 )}
-                                                <button onClick={() => onDelete(file.id)} className="p-2 text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="Delete file">
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        ) : (
-                             <div className="text-center p-4 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 rounded-xl text-sm flex items-center justify-center gap-2 border border-amber-100 dark:border-amber-900/30">
-                                <Loader2 className="w-4 h-4 animate-spin" /> Connecting...
-                             </div>
-                        )}
-                    </div>
-
-                    <div>
-                        <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-3">Upload New</h4>
-                         <label className={`flex flex-col items-center justify-center p-6 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl hover:border-indigo-400 dark:hover:border-indigo-500 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/20 transition-all cursor-pointer group ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                            <input type="file" accept=".json" onChange={onUpload} className="hidden" disabled={!userId || isUploading} />
-                            {isUploading ? (
-                                <div className="flex flex-col items-center gap-2 text-indigo-600 dark:text-indigo-400">
-                                    <Loader2 className="w-8 h-8 animate-spin" />
-                                    <span className="font-medium">Uploading...</span>
-                                </div>
-                            ) : (
-                                <>
-                                    <UploadCloud className="w-8 h-8 text-slate-400 dark:text-slate-500 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 mb-2 transition-colors" />
-                                    <span className="text-sm font-medium text-slate-600 dark:text-slate-400 group-hover:text-indigo-700 dark:group-hover:text-indigo-300">Click to Select JSON File</span>
-                                </>
-                            )}
-                        </label>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-};
+    PROMPTS, cleanHtmlForPrompt, 
+    cleanOutputExplanation, urlToGenerativePart 
+} from './lib/gemini';
+import { useKatex } from './hooks/useKatex';
+import { useDarkMode } from './hooks/useDarkMode';
+import { JsonViewerModal } from './components/JsonViewerModal';
+import { SettingsModal } from './components/SettingsModal';
+import { UploadScreen } from './components/UploadScreen';
+import { AppHeader } from './components/AppHeader';
+import { Sidebar } from './components/Sidebar';
+import { EditorView } from './components/EditorView';
 
 // --- MAIN APP ---
 export default function Home() {
@@ -480,44 +37,104 @@ export default function Home() {
     const isKatexLoaded = useKatex();
     const { isDarkMode, toggleDarkMode } = useDarkMode();
 
+    // --- NEW AUTH FUNCTIONS ---
+    const handleLogin = async () => {
+        if (!supabase) return;
+        try {
+            await supabase.auth.signInWithOAuth({
+                provider: 'google',
+            });
+        } catch (error) {
+            console.error("Error during Google sign-in:", error);
+        }
+    };
+
+    const handleLogout = async () => {
+        if (!supabase) return;
+        try {
+            await supabase.auth.signOut();
+            // Clear all local state on logout
+            setData({ original: null, enhanced: null });
+            setStatus({});
+            setFiles([]);
+            setHistory([]);
+            setHistoryIndex(-1);
+            setActiveFileId(null);
+            setUserId(null);
+        } catch (error) {
+            console.error("Error during sign-out:", error);
+        }
+    };
+
     // Auth & Initial Load
     useEffect(() => {
+        console.log("Auth useEffect: Running."); // <-- ADDED
         setUi(prev => ({ ...prev, isClient: true }));
         const storedKey = localStorage.getItem("gemini_api_key");
         if (storedKey) setApiKey(storedKey);
 
         if (!supabase) {
+             console.warn("Auth useEffect: Supabase client not found."); // <-- ADDED
              setUi(prev => ({ ...prev, isCheckingFiles: false }));
              return;
         }
+        console.log("Auth useEffect: Supabase client found."); // <-- ADDED
 
-        const initSession = async () => {
-            let { data: { session } } = await supabase.auth.getSession();
-            if (!session) {
-                const { data: anonData, error } = await supabase.auth.signInAnonymously();
-                if (error) console.error("Anon auth failed:", error);
-                session = anonData.session;
-            }
-            if (session) {
-                setUserId(session.user.id);
-                await fetchAndAutoLoad(session.user.id);
-            } else {
-                 setUi(prev => ({ ...prev, isCheckingFiles: false }));
+        // Check for existing session on load
+        const checkSession = async () => {
+            console.log("checkSession: Starting..."); // <-- ADDED
+            try {
+                const { data: { session }, error } = await supabase.auth.getSession();
+                console.log("checkSession: getSession result", { session, error }); // <-- ADDED
+                if (error) throw error;
+                if (session) {
+                    console.log("checkSession: Session found, user:", session.user.id); // <-- ADDED
+                    setUserId(session.user.id);
+                    await fetchAndAutoLoad(session.user.id);
+                } else {
+                    console.log("checkSession: No session found."); // <-- ADDED
+                    console.log("Setting isCheckingFiles: false (no session)"); // <-- ADDED
+                    setUi(prev => ({ ...prev, isCheckingFiles: false }));
+                }
+            } catch (error) {
+                console.error("Error checking session:", error);
+                console.log("Setting isCheckingFiles: false (session error)"); // <-- ADDED
+                setUi(prev => ({ ...prev, isCheckingFiles: false }));
             }
         };
-        initSession();
 
+        checkSession();
+
+        // Listen for auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+             console.log("onAuthStateChange: Event triggered:", event); // <-- ADDED
              if (event === 'SIGNED_IN' && session) {
+                 console.log("onAuthStateChange: SIGNED_IN, fetching data."); // <-- ADDED
                  setUserId(session.user.id);
                  await fetchAndAutoLoad(session.user.id);
+             } else if (event === 'SIGNED_OUT') {
+                 // Clear state if user signs out in another tab
+                 console.log("onAuthStateChange: SIGNED_OUT, clearing state."); // <-- ADDED
+                 setData({ original: null, enhanced: null });
+                 setStatus({});
+                 setFiles([]);
+                 setHistory([]);
+                 setHistoryIndex(-1);
+                 setActiveFileId(null);
+                 setUserId(null);
              }
         });
         return () => subscription.unsubscribe();
     }, []);
 
     const fetchAndAutoLoad = async (uid) => {
-        if (!supabase || !uid) return;
+        console.log(`fetchAndAutoLoad: Starting for user ${uid}`); // <-- ADDED
+        if (!supabase || !uid) {
+             console.warn("fetchAndAutoLoad: Aborting, no supabase client or user ID."); // <-- ADDED
+             console.log("Setting isCheckingFiles: false (fetchAndAutoLoad abort)"); // <-- ADDED
+             setUi(prev => ({ ...prev, isCheckingFiles: false }));
+             return;
+        }
         try {
             const { data: fileList, error } = await supabase
                 .from('question_banks')
@@ -525,6 +142,7 @@ export default function Home() {
                 .eq('user_id', uid)
                 .order('updated_at', { ascending: false });
 
+            console.log("fetchAndAutoLoad: Query result", { fileList, error }); // <-- ADDED
             if (error) throw error;
             setFiles(fileList);
 
@@ -535,6 +153,8 @@ export default function Home() {
         } catch (e) {
             console.error("Error fetching files:", e);
         } finally {
+             console.log("fetchAndAutoLoad: Reached finally block."); // <-- ADDED
+             console.log("Setting isCheckingFiles: false (fetchAndAutoLoad finally)"); // <-- ADDED
              setUi(prev => ({ ...prev, isCheckingFiles: false }));
         }
     };
@@ -862,72 +482,30 @@ export default function Home() {
 
     if (!data.original) {
         return (
-            <>
-                <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-50 to-indigo-50/30 dark:from-slate-950 dark:to-indigo-950/30">
-                    <div className="max-w-md w-full bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-800 text-center space-y-6 sm:space-y-8 relative">
-                         <div className="absolute top-4 right-4 flex items-center gap-2">
-                             <button onClick={toggleDarkMode} className="p-2 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-full transition-colors" title="Toggle Theme">
-                                {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-                            </button>
-                             <button onClick={() => setUi(p => ({...p, showSettings: true}))} className="p-2 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-full transition-colors" title="Manage Saved Files">
-                                <Cog className="w-5 h-5" />
-                            </button>
-                         </div>
-                        <div className="inline-flex p-4 bg-indigo-50 dark:bg-indigo-900/30 rounded-2xl mb-2"><Sparkles className="w-12 h-12 text-indigo-600 dark:text-indigo-400" /></div>
-                        <div>
-                            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white mb-3">Gemini Enhancer</h1>
-                            <p className="text-slate-500 dark:text-slate-400 leading-relaxed text-sm sm:text-base">Upgrade your educational content with AI-powered explanations.</p>
-                        </div>
-                        
-                        <div className="space-y-4">
-                            <input type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); localStorage.setItem("gemini_api_key", e.target.value); }} placeholder="Paste Gemini API Key..." className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm dark:text-white dark:placeholder-slate-500" />
-                            
-                            {files.length > 0 ? (
-                                <div className="space-y-3">
-                                    <button onClick={() => setUi(p => ({...p, showSettings: true}))} className="w-full p-4 flex items-center justify-between bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/50 rounded-xl text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors font-medium group">
-                                        <span className="flex items-center gap-2"><FileText className="w-5 h-5" /> Load from {files.length} saved file{files.length !== 1 ? 's' : ''}</span>
-                                        <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                                    </button>
-                                    <div className="relative flex items-center py-2">
-                                        <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
-                                        <span className="flex-shrink-0 mx-4 text-xs text-slate-400 dark:text-slate-600 font-medium uppercase tracking-wider">OR</span>
-                                        <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
-                                    </div>
-                                </div>
-                            ) : null}
-                            
-                             <label className={`group flex flex-col items-center justify-center p-6 sm:p-8 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl hover:border-indigo-400 dark:hover:border-indigo-500 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/20 transition-all cursor-pointer ${ui.loading ? 'opacity-50 pointer-events-none' : ''}`}>
-                                <input type="file" accept=".json" onChange={handleLocalFileLoad} className="hidden" />
-                                {ui.loading ? <Loader2 className="w-8 h-8 text-indigo-600 dark:text-indigo-400 animate-spin" /> : <><UploadCloud className="w-10 h-10 text-slate-400 dark:text-slate-500 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 mb-3 transition-colors" /><span className="text-sm font-medium text-slate-600 dark:text-slate-400 group-hover:text-indigo-700 dark:group-hover:text-indigo-300">Upload Local JSON File</span></>}
-                            </label>
-                        </div>
-                    </div>
-                </div>
-                <SettingsModal 
-                    isOpen={ui.showSettings} 
-                    onClose={() => setUi(p => ({...p, showSettings: false}))}
-                    files={files}
-                    onUpload={handleFileUpload}
-                    onDelete={handleFileDelete}
-                    onLoad={(file) => {
-                        // Ensure we load the full data if it wasn't fetched in the list view
-                        if (!file.original_data) {
-                             supabase.from('question_banks').select('*').eq('id', file.id).single().then(({ data }) => {
-                                 if (data) loadFileData(data);
-                             });
-                        } else {
-                            loadFileData(file);
-                        }
-                    }}
-                    isUploading={ui.isUploading}
-                    userId={userId}
-                    activeFileId={activeFileId}
-                />
-            </>
+            <UploadScreen
+                apiKey={apiKey}
+                setApiKey={setApiKey}
+                toggleDarkMode={toggleDarkMode}
+                isDarkMode={isDarkMode}
+                setUi={setUi}
+                files={files}
+                handleLocalFileLoad={handleLocalFileLoad}
+                ui={ui}
+                // Auth props
+                userId={userId}
+                handleLogin={handleLogin}
+                handleLogout={handleLogout}
+                isCheckingFiles={ui.isCheckingFiles}
+                // SettingsModal props
+                handleFileUpload={handleFileUpload}
+                handleFileDelete={handleFileDelete}
+                loadFileData={loadFileData}
+                supabase={supabase}
+                userId={userId}
+                activeFileId={activeFileId}
+            />
         );
     }
-
-    const currentSt = status[ui.idx];
 
     return (
         <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden">
@@ -937,120 +515,45 @@ export default function Home() {
                 </div>
             )}
 
-            <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between sticky top-0 z-10 flex-shrink-0">
-                <div className="flex items-center gap-3">
-                    <button onClick={() => setUi(p => ({...p, isSidebarOpen: !p.isSidebarOpen}))} className="md:hidden p-2 -ml-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
-                        {ui.isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-                    </button>
-                    <div className="bg-indigo-600 p-2 rounded-lg hidden sm:block"><Sparkles className="w-5 h-5 text-white" /></div>
-                    <h1 className="font-bold text-lg text-slate-900 dark:text-white truncate max-w-[120px] sm:max-w-none">Gemini Enhancer</h1>
-                    {activeFileId && files.find(f => f.id === activeFileId) && (
-                         <div className="hidden md:flex items-center ml-4 px-3 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-full text-xs font-medium max-w-[200px] truncate">
-                            <FileText className="w-3.5 h-3.5 mr-1.5" />
-                            <span className="truncate">{files.find(f => f.id === activeFileId).name}</span>
-                         </div>
-                    )}
-                    <div className="h-6 w-px bg-slate-200 dark:bg-slate-800 mx-4 hidden lg:block" />
-                    <div className="hidden lg:flex gap-2 text-sm font-medium">
-                        <span className="px-2.5 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-full">{stats.approved} Approved</span>
-                        <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full">{stats.total} Total</span>
-                    </div>
-                </div>
-                <div className="flex items-center gap-2 sm:gap-3">
-                     <div className="flex items-center gap-2 mr-2 sm:mr-4 border-r border-slate-200 dark:border-slate-800 pr-2 sm:pr-4">
-                        <span className="text-sm font-medium text-slate-600 dark:text-slate-400 hidden lg:inline">Batch:</span>
-                        <input type="number" min="1" max="50" value={ui.batchSize} onChange={e => setUi(p => ({ ...p, batchSize: parseInt(e.target.value) || 1 }))} className="w-12 sm:w-16 px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white" disabled={ui.isBatchRunning} />
-                        <Button onClick={handleBatchEnhance} disabled={ui.isBatchRunning || !apiKey} variant="primary" className="!p-2 sm:!py-1.5 sm:!px-3 text-sm" title="Run Batch">
-                            {ui.isBatchRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <FastForward className="w-4 h-4" />}
-                            <span className="hidden sm:inline">{ui.isBatchRunning ? `${ui.batchProgress.current}/${ui.batchProgress.total}` : 'Run'}</span>
-                        </Button>
-                        <Button onClick={handleBatchApprove} disabled={stats.enhanced === 0} variant="success" className="!p-2 sm:!py-1.5 sm:!px-3 text-sm" title="Batch Approve All Enhanced">
-                            <CheckCheck className="w-4 h-4" />
-                            <span className="hidden sm:inline">Approve All</span>
-                        </Button>
-                    </div>
-
-                    <div className="flex items-center gap-1 mr-2 border-r border-slate-200 dark:border-slate-800 pr-3 hidden sm:flex">
-                        <button onClick={handleUndo} disabled={historyIndex <= 0} className="p-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50" title="Undo"><RotateCcw className="w-4 h-4" /></button>
-                        <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="p-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50" title="Redo"><RotateCw className="w-4 h-4" /></button>
-                    </div>
-                    
-                    <button onClick={toggleDarkMode} className="p-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" title="Toggle Theme">
-                        {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-                    </button>
-
-                    <button onClick={() => setUi(p => ({...p, showSettings: true}))} className="p-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" title="Settings">
-                        <Cog className="w-5 h-5" />
-                    </button>
-                    <Button variant="ghost" onClick={() => setUi(p => ({...p, showJson: true}))} title="View JSON" className="!p-2"><Eye className="w-5 h-5" /></Button>
-                    <Button variant="outline" onClick={downloadJSON} className="hidden sm:flex"><Download className="w-4 h-4" /><span className="hidden sm:inline ml-2">Export</span></Button>
-                </div>
-            </header>
+            <AppHeader
+                ui={ui}
+                setUi={setUi}
+                activeFileId={activeFileId}
+                files={files}
+                stats={stats}
+                handleBatchEnhance={handleBatchEnhance}
+                handleBatchApprove={handleBatchApprove}
+                apiKey={apiKey}
+                handleUndo={handleUndo}
+                historyIndex={historyIndex}
+                handleRedo={handleRedo}
+                history={history}
+                toggleDarkMode={toggleDarkMode}
+                isDarkMode={isDarkMode}
+                downloadJSON={downloadJSON}
+                handleLogout={handleLogout}
+            />
 
             <div className="flex-1 flex overflow-hidden relative">
-                <aside className={`absolute md:relative z-20 h-full w-80 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col transition-transform duration-300 ease-in-out ${ui.isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
-                    <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex-shrink-0 flex justify-between items-center">
-                        <select className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none" value={ui.subject || ''} onChange={e => setUi(p => ({ ...p, subject: e.target.value || null }))}>
-                            <option value="">All Subjects</option>
-                            {subjects.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                         <button onClick={() => setUi(p => ({...p, isSidebarOpen: false}))} className="md:hidden p-2 ml-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
-                            <X className="w-5 h-5" />
-                        </button>
-                    </div>
-                    <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-1 custom-scrollbar">
-                        {filteredList.map(i => {
-                            const st = status[i];
-                            const isActive = i === ui.idx;
-                            return (
-                                <button key={i} onClick={() => setUi(p => ({ ...p, idx: i, isSidebarOpen: false }))} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 group ${isActive ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-900/50 shadow-sm' : 'bg-white dark:bg-slate-900 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800 hover:border-slate-200 dark:hover:border-slate-700'}`}>
-                                    <div className="flex justify-between items-center mb-1">
-                                        <span className={`font-semibold text-sm ${isActive ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`}>Question {i + 1}</span>
-                                        {st === 'approved' && <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />}
-                                        {st === 'enhanced' && <Sparkles className="w-4 h-4 text-violet-500 dark:text-violet-400" />}
-                                        {st === 'batch-enhanced' && <FastForward className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />}
-                                        {st === 'enhancing' && <Loader2 className="w-4 h-4 text-indigo-500 dark:text-indigo-400 animate-spin" />}
-                                        {st === 'error' && <AlertCircle className="w-4 h-4 text-red-500 dark:text-red-400" />}
-                                    </div>
-                                    <div className={`text-xs truncate ${isActive ? 'text-indigo-600/70 dark:text-indigo-400/70' : 'text-slate-400 dark:text-slate-500 group-hover:text-slate-500 dark:group-hover:text-slate-400'}`}>{data.original[i].topic || data.original[i].subject}</div>
-                                </button>
-                            );
-                        })}
-                    </div>
-                </aside>
-                
-                {ui.isSidebarOpen && <div className="fixed inset-0 bg-black/20 z-10 md:hidden" onClick={() => setUi(p => ({...p, isSidebarOpen: false}))} />}
+                <Sidebar
+                    ui={ui}
+                    setUi={setUi}
+                    subjects={subjects}
+                    filteredList={filteredList}
+                    status={status}
+                    data={data}
+                />
 
-                <main className="flex-1 min-h-0 flex flex-col overflow-hidden bg-slate-50/50 dark:bg-slate-950/50 w-full">
-                    <div className="bg-white dark:bg-slate-900 px-4 sm:px-6 py-3 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center flex-shrink-0 flex-wrap gap-3">
-                        <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-                            <button onClick={() => setUi(p => ({ ...p, idx: Math.max(0, p.idx - 1) }))} disabled={ui.idx === 0} className="p-1.5 sm:p-2 hover:bg-white dark:hover:bg-slate-700 rounded-md disabled:opacity-50 transition-all shadow-sm dark:shadow-none disabled:shadow-none"><ChevronLeft className="w-4 h-4 text-slate-600 dark:text-slate-400" /></button>
-                            <span className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400 px-2 sm:px-3"> {ui.idx + 1} / {data.original.length}</span>
-                            <button onClick={() => setUi(p => ({ ...p, idx: Math.min(data.original.length - 1, p.idx + 1) }))} disabled={ui.idx === data.original.length - 1} className="p-1.5 sm:p-2 hover:bg-white dark:hover:bg-slate-700 rounded-md disabled:opacity-50 transition-all shadow-sm dark:shadow-none disabled:shadow-none"><ChevronRight className="w-4 h-4 text-slate-600 dark:text-slate-400" /></button>
-                        </div>
-                        <div className="flex gap-2 sm:gap-3 flex-wrap">
-                             <Button onClick={handleApproveOriginal} variant="outline" className="text-xs sm:text-sm !px-2 sm:!px-4">
-                                Original
-                            </Button>
-                            <Button onClick={handleEnhance} disabled={currentSt === 'enhancing' || ui.isBatchRunning} variant={currentSt === 'enhanced' || currentSt === 'approved' || currentSt === 'batch-enhanced' ? 'outline' : 'primary'} className="text-xs sm:text-sm !px-2 sm:!px-4">
-                                {currentSt === 'enhancing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                                <span className="hidden sm:inline">{currentSt === 'enhanced' || currentSt === 'approved' || currentSt === 'batch-enhanced' ? 'Re-Enhance' : 'Auto-Enhance'}</span>
-                            </Button>
-                            <Button onClick={handleApprove} disabled={currentSt !== 'enhanced' && currentSt !== 'approved' && currentSt !== 'batch-enhanced'} variant="success" className="text-xs sm:text-sm !px-2 sm:!px-4">
-                                <Check className="w-4 h-4" /> <span className="hidden sm:inline">{currentSt === 'approved' ? 'Approved' : 'Approve'}</span>
-                            </Button>
-                        </div>
-                    </div>
-
-                    <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                        <div className="h-full min-h-[400px] lg:min-h-0">
-                            <QuestionCard question={data.original[ui.idx]} title="Original Version" isKatexLoaded={isKatexLoaded} />
-                        </div>
-                        <div className={`flex flex-col h-full min-h-[400px] lg:min-h-0 transition-all duration-500 ${currentSt === 'enhancing' ? 'opacity-50 scale-[0.98] blur-[1px]' : 'opacity-100 scale-100'}`}>
-                            <QuestionCard question={data.enhanced[ui.idx]} title="AI Enhanced Version" type="enhanced" isKatexLoaded={isKatexLoaded} />
-                        </div>
-                    </div>
-                </main>
+                <EditorView
+                    ui={ui}
+                    setUi={setUi}
+                    data={data}
+                    status={status}
+                    handleApproveOriginal={handleApproveOriginal}
+                    handleEnhance={handleEnhance}
+                    handleApprove={handleApprove}
+                    isKatexLoaded={isKatexLoaded}
+                />
             </div>
             
             <JsonViewerModal 
@@ -1077,6 +580,10 @@ export default function Home() {
                 isUploading={ui.isUploading}
                 userId={userId}
                 activeFileId={activeFileId}
+                // Auth props
+                handleLogin={handleLogin}
+                handleLogout={handleLogout}
+                isCheckingFiles={ui.isCheckingFiles}
             />
         </div>
     );
