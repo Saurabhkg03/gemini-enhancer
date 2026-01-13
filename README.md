@@ -1,173 +1,114 @@
 <div align="center">
-<a href="https://www.google.com/search?q=https://github.com/saurabhkg03/gemini-enhancer">
-<img src="./public/globe.svg" alt="Logo" width="100" height="100">
-</a>
 
-<h1 align="center">Gemini Enhancer</h1>
+  <h1>✨ Gemini Enhancer</h1>
+  
+  <p>
+    <strong>AI-Powered Educational Content Refinement Tool</strong>
+  </p>
 
-<p align="center">
-<b>Unleash the full potential of AI with structured workflows.</b>
-<br />
-A powerful Next.js dashboard for Google Gemini featuring advanced editor capabilities, native LaTeX math rendering, and persistent data storage.
-<br />
-<br />
-<a href="#demo">View Demo</a>
-·
-<a href="#getting-started">Getting Started</a>
-·
-<a href="CONTRIBUTING.md">Contribute</a>
-</p>
-</div>
+  <p>
+    <a href="#-overview">Overview</a> •
+    <a href="#-features">Features</a> •
+    <a href="#-tech-stack">Tech Stack</a> •
+    <a href="#-getting-started">Getting Started</a> •
+    <a href="#-usage">Usage</a>
+  </p>
 
-<!-- BADGES -->
-
-<div align="center">
-<img src="https://www.google.com/search?q=https://img.shields.io/badge/Next.js-black%3Fstyle%3Dfor-the-badge%26logo%3Dnext.js%26logoColor%3Dwhite" alt="Next.js" />
-<img src="https://www.google.com/search?q=https://img.shields.io/badge/Tailwind_CSS-38B2AC%3Fstyle%3Dfor-the-badge%26logo%3Dtailwind-css%26logoColor%3Dwhite" alt="Tailwind CSS" />
-<img src="https://www.google.com/search?q=https://img.shields.io/badge/Supabase-3ECF8E%3Fstyle%3Dfor-the-badge%26logo%3Dsupabase%26logoColor%3Dwhite" alt="Supabase" />
-<img src="https://www.google.com/search?q=https://img.shields.io/badge/Google%2520Gemini-8E75B2%3Fstyle%3Dfor-the-badge%26logo%3Dgoogle%26logoColor%3Dwhite" alt="Gemini AI" />
+  <p>
+    <img src="https://img.shields.io/badge/Next.js-16.0-black?style=flat&logo=next.js" alt="Next.js" />
+    <img src="https://img.shields.io/badge/React-19.0-61DAFB?style=flat&logo=react&logoColor=black" alt="React" />
+    <img src="https://img.shields.io/badge/Supabase-Backend-3ECF8E?style=flat&logo=supabase" alt="Supabase" />
+    <img src="https://img.shields.io/badge/Gemini-2.5_Flash-8E75B2?style=flat&logo=google-gemini" alt="Gemini" />
+    <img src="https://img.shields.io/badge/Tailwind_CSS-4.0-38B2AC?style=flat&logo=tailwind-css" alt="Tailwind" />
+  </p>
 </div>
 
 <br />
 
-<!-- SCREENSHOT SECTION -->
+## 🚀 Overview
 
-<div id="demo" align="center">
-<!-- Replace the src below with a real screenshot of your dashboard for the best effect -->
-<img src="https://www.google.com/search?q=https://placehold.co/1200x600/1e1e1e/FFF%3Ftext%3DGemini%2BEnhancer%2BDashboard%2BPreview" alt="Dashboard Preview" style="border-radius: 10px;">
-</div>
+**Gemini Enhancer** is a sophisticated dashboard designed to transform raw question banks into high-quality, well-explained educational content. 
 
-<br />
+Leveraging **Google's Gemini 2.5 Flash** model, this tool automates the generation of step-by-step solutions, latex-formatted equations, and conceptual explanations for multiple-choice questions. It supports **multimodal input**, allowing the AI to "see" and solve questions containing diagrams or images.
 
-📖 About The Project
+Built with a focus on speed and usability, it features an **Optimistic UI** with atomic saving, ensuring that revisions are safe, fast, and collaborative.
 
-Gemini Enhancer allows users to move beyond simple chat interfaces. It provides a structured workspace designed for prompt engineering, complex content generation, and knowledge management.
+## ✨ Features
 
-Built with Next.js 14, it leverages Supabase for secure data persistence and KaTeX for rendering complex mathematical notations instantly.
+* **🧠 AI-Powered Enhancement:** Automatically generates detailed, HTML-formatted explanations using Gemini 2.5 Flash.
+* **🖼️ Multimodal Support:** Analyzes images within questions to provide context-aware solutions.
+* **⚡ Batch Processing:** Enhance hundreds of questions in the background with a progress tracking bar.
+* **📝 Interactive Editor:** Side-by-side view of the "Original" vs. "Enhanced" content with live editing capabilities.
+* **💾 Atomic & Optimistic Saving:** Changes are saved instantly to Supabase with undo/redo history support.
+* **🌗 Dark Mode:** A fully responsive UI that looks great in light or dark themes.
+* **📤 JSON Import/Export:** easily upload raw JSON banks and download the enhanced versions.
+* **🧮 KaTeX Rendering:** Native support for rendering complex mathematical equations.
 
-Key Capabilities
+## 🛠 Tech Stack
 
-Structured Workflow: Separate drafting in the EditorView from inquiries in the Dashboard.
+| Component | Technology |
+| :--- | :--- |
+| **Framework** | Next.js 16 (App Router) |
+| **UI Library** | React 19, Tailwind CSS 4, Lucide React |
+| **Backend & Auth** | Supabase (PostgreSQL) |
+| **AI Model** | Google Gemini (Generative AI SDK) |
+| **Math Rendering** | KaTeX |
+| **State Management** | React Hooks (Optimistic UI patterns) |
 
-Math First: Native LaTeX support means equations like $E = mc^2$ render perfectly—ideal for STEM.
+## 🚀 Getting Started
 
-Persistent Memory: Save prompts, responses, and settings to the cloud via Supabase.
+Follow these steps to set up the project locally.
 
-Developer Friendly: Includes a JSON viewer to inspect raw API responses.
+### Prerequisites
 
-🛠️ Tech Stack
+* **Node.js** (v18 or higher)
+* **Supabase Account** (for database and auth)
+* **Google Gemini API Key**
 
-Component
+### Installation
 
-Technology
+1.  **Clone the repository**
+    ```bash
+    git clone [https://github.com/yourusername/gemini-enhancer.git](https://github.com/yourusername/gemini-enhancer.git)
+    cd gemini-enhancer
+    ```
 
-Description
+2.  **Install dependencies**
+    ```bash
+    npm install
+    ```
 
-Framework
+3.  **Environment Setup**
+    Create a `.env.local` file in the root directory and add your Supabase credentials:
+    ```bash
+    NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+    ```
 
-Next.js 14
+4.  **Database Setup**
+    Ensure your Supabase database has the required tables (`question_banks`, `questions`) with the appropriate columns as seen in the schema usage (e.g., `original_data` jsonb, `enhanced_data` jsonb, `status` text).
 
-App Router & Server Components
+5.  **Run the Development Server**
+    ```bash
+    npm run dev
+    ```
 
-Styling
+    Open [http://localhost:3000](http://localhost:3000) with your browser.
 
-Tailwind CSS
+## 💡 Usage
 
-Utility-first CSS framework
+1.  **Login:** Sign in using Google Auth (via Supabase).
+2.  **API Key:** Enter your Gemini API Key in the dashboard settings (stored locally for privacy).
+3.  **Upload:** Drag and drop a JSON file containing an array of questions.
+4.  **Enhance:** * Click **Auto-Enhance** on individual questions.
+    * Use **Batch Enhance** to process the entire file at once.
+5.  **Review:** Edit the AI output if necessary, then click **Approve**.
+6.  **Export:** Download the fully enhanced JSON file for use in your LMS or app.
 
-Backend
+## 🤝 Contributing
 
-Supabase
+Contributions are welcome! Please check the [CONTRIBUTING.md](CONTRIBUTING.md) file for guidelines on how to help improve this project.
 
-PostgreSQL database & Authentication
+## 📄 License
 
-AI Model
-
-Google Gemini
-
-gemini-pro for text generation
-
-Math
-
-KaTeX
-
-Fast LaTeX math rendering
-
-🚀 Getting Started
-
-Follow these steps to get a local copy up and running.
-
-Prerequisites
-
-Node.js 18+
-
-npm or yarn
-
-Supabase Account & Project
-
-Google AI Studio API Key
-
-Installation
-
-Clone the repo
-
-git clone [https://github.com/saurabhkg03/gemini-enhancer.git](https://github.com/saurabhkg03/gemini-enhancer.git)
-cd gemini-enhancer
-
-
-Install dependencies
-
-npm install
-
-
-Environment Setup
-Create a .env.local file in the root directory:
-
-# Supabase Configuration
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-
-# Google Gemini Configuration
-NEXT_PUBLIC_GEMINI_API_KEY=your_gemini_api_key
-
-
-Run the development server
-
-npm run dev
-
-
-Open http://localhost:3000 in your browser.
-
-📂 Project Structure
-
-gemini-enhancer/
-├── app/
-│   ├── components/      # React UI components (Dashboard, Editor, etc.)
-│   ├── hooks/           # Custom hooks (useDarkMode, useKatex)
-│   ├── lib/             # API clients (gemini.js, supabase.js)
-│   └── page.js          # Entry point
-├── public/              # Static assets (icons, SVGs)
-└── ...config files      # Next.js, Tailwind, ESLint configs
-
-
-🤝 Contributing
-
-Contributions are strictly welcome! See CONTRIBUTING.md for details.
-
-Fork the Project
-
-Create your Feature Branch (git checkout -b feature/AmazingFeature)
-
-Commit your Changes (git commit -m 'Add some AmazingFeature')
-
-Push to the Branch (git push origin feature/AmazingFeature)
-
-Open a Pull Request
-
-📜 License
-
-Distributed under the MIT License. See LICENSE for more information.
-
-<div align="center">
-<p>Built with ❤️ by <a href="https://www.google.com/search?q=https://github.com/saurabhkg03">Saurabh</a></p>
-</div>
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
