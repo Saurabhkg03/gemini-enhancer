@@ -1,136 +1,115 @@
 <div align="center">
+<a href="https://www.google.com/search?q=https://github.com/saurabhkg03/gemini-enhancer">
+<img src="./public/globe.svg" alt="Logo" width="100" height="100">
+</a>
 
-<!-- PROJECT LOGO -->
+<h1 align="center">Gemini Enhancer</h1>
 
+<p align="center">
+<b>Unleash the full potential of AI with structured workflows.</b>
 <br />
-<div style="background: linear-gradient(to right, #4f46e5, #06b6d4); padding: 2px; border-radius: 50%; display: inline-block;">
-<img src="public/globe.svg" alt="Logo" width="80" height="80" style="background-color: white; border-radius: 50%; padding: 10px;">
-</div>
-
-<h1 style="font-size: 3rem; margin-top: 1rem;">Gemini Enhancer</h1>
-
-<p style="font-size: 1.2rem; max-width: 600px; margin: 0 auto;">
-<b>Unleash the full potential of AI.</b>
-
-
-
-
 A powerful Next.js dashboard for Google Gemini featuring advanced editor capabilities, native LaTeX math rendering, and persistent data storage.
-</p>
-
 <br />
+<br />
+<a href="#demo">View Demo</a>
+·
+<a href="#getting-started">Getting Started</a>
+·
+<a href="CONTRIBUTING.md">Contribute</a>
+</p>
+</div>
 
 <!-- BADGES -->
 
-<a href="https://nextjs.org">
-<img src="https://www.google.com/search?q=https://img.shields.io/badge/Next.js-14-black%3Fstyle%3Dfor-the-badge%26logo%3Dnext.js" alt="Next.js" />
-</a>
-<a href="https://tailwindcss.com">
+<div align="center">
+<img src="https://www.google.com/search?q=https://img.shields.io/badge/Next.js-black%3Fstyle%3Dfor-the-badge%26logo%3Dnext.js%26logoColor%3Dwhite" alt="Next.js" />
 <img src="https://www.google.com/search?q=https://img.shields.io/badge/Tailwind_CSS-38B2AC%3Fstyle%3Dfor-the-badge%26logo%3Dtailwind-css%26logoColor%3Dwhite" alt="Tailwind CSS" />
-</a>
-<a href="https://supabase.com">
-<img src="https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase" />
-</a>
-<a href="https://ai.google.dev/">
-<img src="https://www.google.com/search?q=https://img.shields.io/badge/Gemini_AI-8E75B2%3Fstyle%3Dfor-the-badge%26logo%3Dgoogle%26logoColor%3Dwhite" alt="Gemini AI" />
-</a>
-
-<br />
-<br />
-
-<a href="#demo">View Demo</a> •
-<a href="#getting-started">Getting Started</a> •
-<a href="#features">Features</a> •
-<a href="https://www.google.com/search?q=CONTRIBUTING.md">Contribute</a>
-
+<img src="https://www.google.com/search?q=https://img.shields.io/badge/Supabase-3ECF8E%3Fstyle%3Dfor-the-badge%26logo%3Dsupabase%26logoColor%3Dwhite" alt="Supabase" />
+<img src="https://www.google.com/search?q=https://img.shields.io/badge/Google%2520Gemini-8E75B2%3Fstyle%3Dfor-the-badge%26logo%3Dgoogle%26logoColor%3Dwhite" alt="Gemini AI" />
 </div>
 
 <br />
 
-<!-- SCREENSHOT / DEMO -->
+<!-- SCREENSHOT SECTION -->
 
 <div id="demo" align="center">
-<!-- REPLACE THIS URL WITH YOUR ACTUAL SCREENSHOT URL -->
-<img src="https://www.google.com/search?q=https://via.placeholder.com/1000x500/1e1e1e/ffffff%3Ftext%3DDashboard%2BScreenshot%2BHere" alt="Project Screenshot" style="border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
+<!-- Replace the src below with a real screenshot of your dashboard for the best effect -->
+<img src="https://www.google.com/search?q=https://placehold.co/1200x600/1e1e1e/FFF%3Ftext%3DGemini%2BEnhancer%2BDashboard%2BPreview" alt="Dashboard Preview" style="border-radius: 10px;">
 </div>
 
 <br />
 
 📖 About The Project
 
-Gemini Enhancer is a sophisticated wrapper and workspace designed around the Google Gemini API. It moves beyond simple chat interfaces to provide a structured environment for prompt engineering, content generation, and knowledge management.
+Gemini Enhancer allows users to move beyond simple chat interfaces. It provides a structured workspace designed for prompt engineering, complex content generation, and knowledge management.
 
-Built with Next.js, it leverages Supabase for keeping track of your interactions and KaTeX to ensure that mathematical and scientific outputs are rendered beautifully.
+Built with Next.js 14, it leverages Supabase for secure data persistence and KaTeX for rendering complex mathematical notations instantly.
 
-Why use Gemini Enhancer?
+Key Capabilities
 
-Structured Workflow: Separate your drafting in the EditorView from your inquiries in the Dashboard.
+Structured Workflow: Separate drafting in the EditorView from inquiries in the Dashboard.
 
-Math First: Native LaTeX support means equations like $E = mc^2$ render perfectly, making it ideal for academic and scientific use cases.
+Math First: Native LaTeX support means equations like $E = mc^2$ render perfectly—ideal for STEM.
 
-Data Persistence: Unlike ephemeral chat sessions, your data is stored securely via Supabase.
+Persistent Memory: Save prompts, responses, and settings to the cloud via Supabase.
 
-✨ Key Features
-
-Feature
-
-Description
-
-🤖 AI Integration
-
-Direct integration with Google's Gemini models for high-quality text generation.
-
-🧮 LaTeX Support
-
-Native rendering of mathematical notation using KaTeX. Perfect for STEM tasks.
-
-🌓 Dark/Light Mode
-
-Built-in theme switching hook (useDarkMode) for comfortable viewing in any environment.
-
-💾 Supabase Backend
-
-Robust database integration for saving prompts, responses, and user settings.
-
-📝 Rich Editor
-
-A dedicated editor view for refining AI-generated content.
-
-🔍 JSON Viewer
-
-Inspect raw data structures with the built-in JsonViewerModal for debugging.
+Developer Friendly: Includes a JSON viewer to inspect raw API responses.
 
 🛠️ Tech Stack
 
-Framework: Next.js (App Router)
+Component
 
-Styling: Tailwind CSS
+Technology
 
-Backend/Auth: Supabase
+Description
 
-AI Model: Google Gemini API
+Framework
 
-Math Rendering: KaTeX
+Next.js 14
 
-Icons: SVG / Heroicons
+App Router & Server Components
+
+Styling
+
+Tailwind CSS
+
+Utility-first CSS framework
+
+Backend
+
+Supabase
+
+PostgreSQL database & Authentication
+
+AI Model
+
+Google Gemini
+
+gemini-pro for text generation
+
+Math
+
+KaTeX
+
+Fast LaTeX math rendering
 
 🚀 Getting Started
 
-Follow these steps to set up the project locally on your machine.
+Follow these steps to get a local copy up and running.
 
 Prerequisites
 
-Node.js (v18 or higher)
+Node.js 18+
 
 npm or yarn
 
-A Supabase account
+Supabase Account & Project
 
-A Google Cloud Project with Gemini API access
+Google AI Studio API Key
 
 Installation
 
-Clone the repository
+Clone the repo
 
 git clone [https://github.com/saurabhkg03/gemini-enhancer.git](https://github.com/saurabhkg03/gemini-enhancer.git)
 cd gemini-enhancer
@@ -139,12 +118,10 @@ cd gemini-enhancer
 Install dependencies
 
 npm install
-# or
-yarn install
 
 
-Configure Environment Variables
-Create a .env.local file in the root directory and add your API keys:
+Environment Setup
+Create a .env.local file in the root directory:
 
 # Supabase Configuration
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
@@ -154,32 +131,28 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 NEXT_PUBLIC_GEMINI_API_KEY=your_gemini_api_key
 
 
-Run the application
+Run the development server
 
 npm run dev
 
 
-Open http://localhost:3000 with your browser to see the result.
+Open http://localhost:3000 in your browser.
 
 📂 Project Structure
 
 gemini-enhancer/
 ├── app/
-│   ├── components/      # React components (Dashboard, Editor, etc.)
+│   ├── components/      # React UI components (Dashboard, Editor, etc.)
 │   ├── hooks/           # Custom hooks (useDarkMode, useKatex)
 │   ├── lib/             # API clients (gemini.js, supabase.js)
-│   ├── globals.css      # Global styles & Tailwind directives
-│   ├── layout.js        # Root layout
-│   └── page.js          # Main entry point
-├── public/              # Static assets
+│   └── page.js          # Entry point
+├── public/              # Static assets (icons, SVGs)
 └── ...config files      # Next.js, Tailwind, ESLint configs
 
 
 🤝 Contributing
 
-Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are greatly appreciated.
-
-See CONTRIBUTING.md for detailed guidelines.
+Contributions are strictly welcome! See CONTRIBUTING.md for details.
 
 Fork the Project
 
